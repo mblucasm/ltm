@@ -42,6 +42,7 @@ typedef enum {
     TT_KEYWORD,
     TT_STRING,
     TT_ARROW,
+    TT_STAR,
     TT_COUNT,
 } TokType;
 
@@ -67,7 +68,7 @@ Lex lex_create(const char *fp, const char *data) {
     };
 }
 
-_STATIC_ASSERT(TT_COUNT == 10);
+_STATIC_ASSERT(TT_COUNT == 11);
 const char *tok_type_to_str(TokType type) {
     switch(type) {
         case TT_UNKNOWN: return "TT_UNKNOWN";
@@ -80,6 +81,7 @@ const char *tok_type_to_str(TokType type) {
         case TT_KEYWORD: return "TT_KEYWORD";
         case TT_STRING: return "TT_STRING";
         case TT_ARROW: return "TT_ARROW";
+        case TT_STAR: return "TT_STAR";
         default: exit(1);
     }
 }
@@ -177,6 +179,7 @@ redo:
     Slice raw = tok_parse(start, allchars);
     if(slice_eq(raw, slice_create_raw("{"))) return tok_create(TT_OPENING, raw, LOCATION);
     else if(slice_eq(raw, slice_create_raw("}"))) return tok_create(TT_CLOSING, raw, LOCATION);
+    else if(slice_eq(raw, slice_create_raw("*"))) return tok_create(TT_STAR, raw, LOCATION);
     else if(raw.len == 3 && raw.data[0] == '\'' && raw.data[2] == '\'') return tok_create(TT_CHAR, raw, LOCATION);
     else if(raw.len == 1 && (*raw.data == '<' || *raw.data == '-' || *raw.data == '>')) return tok_create(TT_DIR, raw, LOCATION);
     else if(raw.len == 2 && raw.data[0] == '=' && raw.data[1] == '>') return tok_create(TT_ARROW, raw, LOCATION);
@@ -266,6 +269,12 @@ void unhandled(size_t line) {
     exit(1);
 }
 
+Tok lex_expect2(Lex *l, TokType type1, TokType type2) {
+    Tok t = lex_next(l);
+    if(t.type != type1 && t.type != type2) tok_report(t, "Unexpected token type %s. Expected was %s or %s", tok_type_to_str(t.type), tok_type_to_str(type1), tok_type_to_str(type2));
+    return t;
+}
+
 Tok lex_expect(Lex *l, TokType type) {
     Tok t = lex_next(l);
     if(t.type != type) tok_report(t, "Unexpected token type %s. Expected was %s", tok_type_to_str(t.type), tok_type_to_str(type));
@@ -323,8 +332,8 @@ Program lex_file(const char *fp) {
                     case TT_CLOSING: state = STATE_REGULAR; break;
 
                     case TT_IDEN: {
-                        Tok read  = lex_expect(&l, TT_CHAR);
-                        Tok write = lex_expect(&l, TT_CHAR);
+                        Tok read  = lex_expect2(&l, TT_CHAR, TT_STAR);
+                        Tok write = lex_expect2(&l, TT_CHAR, TT_STAR);
                         Tok dir   = lex_expect(&l, TT_DIR);
                         Tok next  = lex_expect(&l, TT_IDEN);
                         Ins i = {.type = IT_PUSH_RULE, .as.rule = {.state = t, .read = read, .write = write, .dir = dir, .next = next}};
