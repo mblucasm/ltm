@@ -24,11 +24,11 @@ void tape_move(Tape *t, Dir dir) {
     
     switch(dir) {
 
-        case DIRECTION_NONE: break;
+        case DIR_NONE: break;
         
-        case DIRECTION_LEFT:
-        case DIRECTION_RIGHT:
-            if((t->side == SIDE_LEFT && dir == DIRECTION_LEFT) || (t->side == SIDE_RIGHT && dir == DIRECTION_RIGHT)) t->head++;
+        case DIR_LEFT:
+        case DIR_RIGHT:
+            if((t->side == SIDE_LEFT && dir == DIR_LEFT) || (t->side == SIDE_RIGHT && dir == DIR_RIGHT)) t->head++;
             else if(t->head != 0) t->head--;
             else t->side = t->side == SIDE_LEFT ? SIDE_RIGHT : SIDE_LEFT;
         break;

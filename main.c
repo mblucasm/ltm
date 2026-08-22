@@ -12,6 +12,21 @@
 
 #define DEBUG
 
+void unreachable(size_t line) {
+    fprintf(stderr, "%s:%lld: unreachable\n", __FILE__, line);
+    exit(1);
+}
+
+void unhandled(size_t line) {
+    fprintf(stderr, "%s:%lld: unhandled\n", __FILE__, line);
+    exit(1);
+}
+
+void unimplemented(size_t line) {
+    fprintf(stderr, "%s:%lld: unimplemented\n", __FILE__, line);
+    exit(1);
+}
+
 Slice kwords[] = {
     {.data = "tm", .len = 2},
     {.data = "ltm", .len = 3},
@@ -88,7 +103,7 @@ const char *tok_type_to_str(TokType type) {
 
 void tok_print(Tok t) {
     printf(
-        "z.ltm:%lld:%lld ."SLICE_FMT". %s %lld\n", 
+        "z.ltm:%lld:%lld ."SLICE_FMT". %s %lld\n",
         t.loc.row, t.loc.col, SLICE_ARG(t.raw),
         tok_type_to_str(t.type), t.raw.len
     );
@@ -150,10 +165,10 @@ redo:
         }
         ++l->current;
     }
-    
+
     const char *start = l->current;
     if(*start == '\0') return tok_create(TT_EOF, (Slice){0}, LOCATION);
-    
+
     if(start[0] == '-' && start[1] == '-') {
         while(*l->current != '\n') {
             if(*l->current == '\n') {
@@ -241,33 +256,23 @@ typedef enum {STATE_REGULAR, STATE_DECL_TM, STATE_DECL_LTM, STATE_COUNT} State;
 
 Dir dir_from_char(char c) {
     switch(c) {
-        case '<': return DIRECTION_LEFT;
-        case '-': return DIRECTION_NONE;
-        case '>': return DIRECTION_RIGHT;
-        default: fprintf(stderr, "Unreachable\n"); exit(1);
+        case '<': return DIR_LEFT;
+        case '-': return DIR_NONE;
+        case '>': return DIR_RIGHT;
+        default: unreachable(__LINE__); exit(1);
     }
 }
 
 char dir_to_char(Dir d) {
     switch(d) {
-        case DIRECTION_LEFT: return '<';
-        case DIRECTION_NONE: return '-';
-        case DIRECTION_RIGHT: return '>';
-        default: fprintf(stderr, "Unreachable\n"); exit(1);
+        case DIR_LEFT: return '<';
+        case DIR_NONE: return '-';
+        case DIR_RIGHT: return '>';
+        default: unreachable(__LINE__); exit(1);
     }
 }
 
 Slice tm, ltm;
-
-void unreachable(size_t line) {
-    fprintf(stderr, "%s:%lld: unreachable\n", __FILE__, line);
-    exit(1);
-}
-
-void unhandled(size_t line) {
-    fprintf(stderr, "%s:%lld: unhandled\n", __FILE__, line);
-    exit(1);
-}
 
 Tok lex_expect2(Lex *l, TokType type1, TokType type2) {
     Tok t = lex_next(l);
@@ -285,7 +290,7 @@ Program lex_file(const char *fp) {
 
     Slice s = slice_from_file(fp);
     Lex l = lex_create(fp, s.data);
-    
+
     Tok t = {0};
     Program p = {0};
     State state = STATE_REGULAR;
@@ -361,25 +366,97 @@ Program lex_file(const char *fp) {
     return p;
 }
 
-// void run(Program p) {
+typedef struct {
+    Rule *data;
+    size_t len;
+    size_t cap;
+} Rules;
 
-//     State state = STATE_REGULAR;
+typedef struct {
+    Tok iden;
+    Rules rules;
+} TM;
 
-//     for(size_t k = 0; k < p.len; ++k) {
-//         Ins i = p.data[k];
-//         switch(state) {
+typedef struct {
+    TM *data;
+    size_t len;
+    size_t cap;
+} TMs;
 
-//             default: unreachable(__LINE__); break;
+Rule *tm_match(TM *tm, Slice state, char c) {
+    for(size_t i = 0; i < tm->rules.len; ++i) {
+        Rule *curr = tm->rules.data + i;
+        if(slice_eq(curr->state.raw, state) && ((curr->read.type == TT_STAR || curr->read.raw.data[1] == c))) return curr;
+    } return NULL;
+}
 
-//             case STATE_REGULAR: {} break;
-//             case STATE_DECL_TM: {} break;
-//             case STATE_DECL_LTM: {} break;
-//         }
-//     }
-// }
+void tm_run(TM *tm, Tape *tape) {
+
+    Slice state = tm->rules.data[0].state.raw;
+    char c = tape_read_char(*tape);
+
+    Rule *rule;
+    while((rule = tm_match(tm, state, c)) != NULL) {
+        tape_write_char(tape, rule->write.type == TT_STAR ? c : rule->write.raw.data[1]);
+        tape_move(tape, dir_from_char(rule->dir.raw.data[0]));
+        state = rule->next.raw;
+        c = tape_read_char(*tape);
+    }
+}
+
+void run(Program p) {
+
+    TMs tms = {0};
+    Tape tape = {0};
+
+    for(size_t k = 0; k < p.len; ++k) {
+        Ins ins = p.data[k];
+        switch(ins.type) {
+
+            case IT_NOP: break;
+            default: unreachable(__LINE__); break;
+
+            case IT_DECL_TM: {
+                TM tm = { .iden = ins.as.iden };
+                da_append(tms, tm);
+            } break;
+
+            case IT_PUSH_RULE: {
+                TM *tm = da_last(tms);
+                da_append(tm->rules, ins.as.rule);
+            } break;
+
+            case IT_DECL_LTM: unimplemented(__LINE__); break;
+
+            case IT_FEED: {
+                tape_delete(&tape);
+                for(size_t i = 1; i < ins.as.iden.raw.len - 1; ++i) {
+                    tape_write_char(&tape, ins.as.iden.raw.data[i]);
+                    tape_move(&tape, DIR_RIGHT);
+                }
+                tape.head = 0;
+                printf("Printing tape before:\n");
+                tape_print(tape);
+            } break;
+
+            case IT_CALL: {
+                TM *tm = NULL;
+                for(size_t i = 0; i < tms.len; ++i)
+                    if(slice_eq(tms.data[i].iden.raw, ins.as.iden.raw))
+                        tm = tms.data + i;
+                if(tm == NULL) tok_report(ins.as.iden, "Undefined reference to tm\n");
+                tm_run(tm, &tape);
+                printf("Printing tape after:\n");
+                tape_print(tape);
+            } break;
+
+            case IT_COUNT: unimplemented(__LINE__); break;
+        }
+    }
+}
 
 int main(void) {
-    
+
     tm = slice_create_raw("tm");
     ltm = slice_create_raw("ltm");
 
@@ -396,7 +473,7 @@ int main(void) {
             case IT_PUSH_RULE: {
                 Rule r = p.data[i].as.rule;
                 printf(
-                    SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n", 
+                    SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
                     SLICE_ARG(r.state.raw), SLICE_ARG(r.read.raw), SLICE_ARG(r.write.raw),
                     SLICE_ARG(r.dir.raw), SLICE_ARG(r.next.raw)
                 );
@@ -404,6 +481,9 @@ int main(void) {
             default: fprintf(stderr, "unhandled\n"); exit(1);
         }
     }
+    printf("======================\n");
+
+    run(p);
 
     return 0;
 }

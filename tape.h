@@ -4,7 +4,7 @@
 #include "buffer.h"
 #include <stddef.h>
 
-typedef enum {DIRECTION_LEFT = -1, DIRECTION_NONE, DIRECTION_RIGHT} Dir;
+typedef enum {DIR_LEFT = -1, DIR_NONE, DIR_RIGHT} Dir;
 typedef enum {SIDE_LEFT = -1, SIDE_RIGHT} Side;
 
 typedef struct {
