@@ -31,7 +31,19 @@ typedef struct {
     size_t row;
 } Lex;
 
-typedef enum {TT_UNKNOWN, TT_EOF, TT_OPENING, TT_CLOSING, TT_CHAR, TT_IDEN, TT_DIR, TT_KEYWORD, TT_STRING, TT_ARROW, TT_COUNT} TokType;
+typedef enum {
+    TT_UNKNOWN,
+    TT_EOF,
+    TT_OPENING,
+    TT_CLOSING,
+    TT_CHAR,
+    TT_IDEN,
+    TT_DIR,
+    TT_KEYWORD,
+    TT_STRING,
+    TT_ARROW,
+    TT_COUNT,
+} TokType;
 
 typedef struct {
     const char *fp;
@@ -128,6 +140,7 @@ Tok lex_peek(Lex *l) {
     size_t row = l->row;
     const char *row_start = l->row_start;
 
+redo:
     while(isspace(*l->current)) {
         if(*l->current == '\n') {
             ++row;
@@ -135,9 +148,20 @@ Tok lex_peek(Lex *l) {
         }
         ++l->current;
     }
-
+    
     const char *start = l->current;
     if(*start == '\0') return tok_create(TT_EOF, (Slice){0}, LOCATION);
+    
+    if(start[0] == '-' && start[1] == '-') {
+        while(*l->current != '\n') {
+            if(*l->current == '\n') {
+                ++row;
+                row_start = l->current + 1;
+            }
+            ++l->current;
+        }
+        goto redo;
+    }
 
     if(isalpha(*start)) {
         Slice raw = tok_parse(start, isalnum);
@@ -328,22 +352,22 @@ Program lex_file(const char *fp) {
     return p;
 }
 
-void run(Program p) {
+// void run(Program p) {
 
-    State state = STATE_REGULAR;
+//     State state = STATE_REGULAR;
 
-    for(size_t k = 0; k < p.len; ++k) {
-        Ins i = p.data[k];
-        switch(state) {
+//     for(size_t k = 0; k < p.len; ++k) {
+//         Ins i = p.data[k];
+//         switch(state) {
 
-            default: unreachable(__LINE__); break;
+//             default: unreachable(__LINE__); break;
 
-            case STATE_REGULAR: {} break;
-            case STATE_DECL_TM: {} break;
-            case STATE_DECL_LTM: {} break;
-        }
-    }
-}
+//             case STATE_REGULAR: {} break;
+//             case STATE_DECL_TM: {} break;
+//             case STATE_DECL_LTM: {} break;
+//         }
+//     }
+// }
 
 int main(void) {
     
