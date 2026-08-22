@@ -404,6 +404,14 @@ void tm_run(TM *tm, Tape *tape) {
     }
 }
 
+void rule_print(Rule r) {
+    printf(
+        SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
+        SLICE_ARG(r.state.raw), SLICE_ARG(r.read.raw), SLICE_ARG(r.write.raw),
+        SLICE_ARG(r.dir.raw), SLICE_ARG(r.next.raw)
+    );
+}
+
 void run(Program p) {
 
     TMs tms = {0};
@@ -417,11 +425,16 @@ void run(Program p) {
             default: unreachable(__LINE__); break;
 
             case IT_DECL_TM: {
+                for(size_t i = 0; i < tms.len; ++i)  {
+                    Tok t = tms.data[i].iden;
+                    if(slice_eq(t.raw, ins.as.iden.raw)) tok_report(ins.as.iden, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                }
                 TM tm = { .iden = ins.as.iden };
                 da_append(tms, tm);
             } break;
 
             case IT_PUSH_RULE: {
+                // TODO: Check for ambiguity and unicity
                 TM *tm = da_last(tms);
                 da_append(tm->rules, ins.as.rule);
             } break;
@@ -472,11 +485,7 @@ int main(void) {
             case IT_DECL_TM: tok_print(p.data[i].as.iden); break;
             case IT_PUSH_RULE: {
                 Rule r = p.data[i].as.rule;
-                printf(
-                    SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
-                    SLICE_ARG(r.state.raw), SLICE_ARG(r.read.raw), SLICE_ARG(r.write.raw),
-                    SLICE_ARG(r.dir.raw), SLICE_ARG(r.next.raw)
-                );
+                rule_print(r);
             } break;
             default: fprintf(stderr, "unhandled\n"); exit(1);
         }
