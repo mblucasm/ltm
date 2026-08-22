@@ -1,0 +1,8 @@
+
+*.exe
+*.ltm
+
+.vscode
+.vscode/**
+
+Makefile
