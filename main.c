@@ -1,3 +1,5 @@
+// TODO: Pivot to stb_ds.h
+
 #include "tape.h"
 #include "slice.h"
 #include "darray.h"
@@ -11,18 +13,21 @@
 #include <stdarg.h>
 
 #define DEBUG
+#define unreachable   (_unreachable(__LINE__))
+#define unhandled     (_unhandled(__LINE__))
+#define unimplemented (_unimplemented(__LINE__))
 
-void unreachable(size_t line) {
+void _unreachable(size_t line) {
     fprintf(stderr, "%s:%lld: unreachable\n", __FILE__, line);
     exit(1);
 }
 
-void unhandled(size_t line) {
+void _unhandled(size_t line) {
     fprintf(stderr, "%s:%lld: unhandled\n", __FILE__, line);
     exit(1);
 }
 
-void unimplemented(size_t line) {
+void _unimplemented(size_t line) {
     fprintf(stderr, "%s:%lld: unimplemented\n", __FILE__, line);
     exit(1);
 }
@@ -260,16 +265,7 @@ Dir dir_from_char(char c) {
         case '<': return DIR_LEFT;
         case '-': return DIR_NONE;
         case '>': return DIR_RIGHT;
-        default: unreachable(__LINE__); exit(1);
-    }
-}
-
-char dir_to_char(Dir d) {
-    switch(d) {
-        case DIR_LEFT: return '<';
-        case DIR_NONE: return '-';
-        case DIR_RIGHT: return '>';
-        default: unreachable(__LINE__); exit(1);
+        default: _unreachable(__LINE__); exit(1);
     }
 }
 
@@ -303,7 +299,7 @@ Program lex_file(const char *fp) {
         _STATIC_ASSERT(STATE_COUNT == 4);
         switch(state) {
 
-            default: unreachable(__LINE__); break;
+            default: _unreachable(__LINE__); break;
 
             case STATE_REGULAR: {
                 switch(t.type) {
@@ -312,7 +308,7 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: keywords or strings\n"); break;
 
                     case TT_KEYWORD: {
-                        if(!slice_eq(t.raw, tm) && !slice_eq(t.raw, ltm)) unhandled(__LINE__);
+                        if(!slice_eq(t.raw, tm) && !slice_eq(t.raw, ltm)) _unhandled(__LINE__);
                         Tok iden = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
                         Ins i = {.type = slice_eq(t.raw, tm) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
@@ -457,7 +453,7 @@ void ltm_run(LTM *ltm, Tape *tape) {
     for(size_t i = 0; i < ltm->macs.len; ++i) {
         Mac mac = ltm->macs.data[i];
         switch(mac.type) {
-            default: unreachable(__LINE__); break;
+            default: _unreachable(__LINE__); break;
             case MT_LTM: ltm_run(mac.as.ltm, tape); break;
             case MT_TM: tm_run(mac.as.tm, tape); break;
         }
@@ -503,7 +499,7 @@ void run(Program p) {
         switch(ins.type) {
 
             case IT_NOP: break;
-            default: unreachable(__LINE__); break;
+            default: _unreachable(__LINE__); break;
 
             case IT_DECL_TM: {
                 Tok t = ins.as.iden;
@@ -587,7 +583,7 @@ int main(void) {
                 rule_print(r);
             } break;
             case IT_QCALL: tok_print(p.data[i].as.iden); break;
-            default: fprintf(stderr, "unhandled\n"); exit(1);
+            default: fprintf(stderr, "_unhandled\n"); exit(1);
         }
     }
     printf("======================\n");
