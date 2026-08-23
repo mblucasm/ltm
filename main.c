@@ -213,7 +213,7 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_CALL, IT_COUNT} InsType;
+typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_COUNT} InsType;
 
 typedef struct {
     Tok state;
@@ -239,7 +239,7 @@ typedef struct {
     size_t cap;
 } Program;
 
-_STATIC_ASSERT(IT_COUNT == 6);
+_STATIC_ASSERT(IT_COUNT == 7);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "IT_NOP";
@@ -248,11 +248,12 @@ const char *instype_to_str(InsType type) {
         case IT_DECL_LTM: return "IT_DECL_LTM";
         case IT_FEED: return "IT_FEED";
         case IT_CALL: return "IT_CALL";
+        case IT_QCALL: return "IT_QCALL"; // Queue call
         default: exit(1);
     }
 }
 
-typedef enum {STATE_REGULAR, STATE_DECL_TM, STATE_DECL_LTM, STATE_COUNT} State;
+typedef enum {STATE_REGULAR, STATE_DECL_TM, STATE_DECL_LTM, STATE_DECL_BLOCK, STATE_COUNT} State;
 
 Dir dir_from_char(char c) {
     switch(c) {
@@ -299,7 +300,7 @@ Program lex_file(const char *fp) {
 
         t = lex_next(&l);
 
-        _STATIC_ASSERT(STATE_COUNT == 3);
+        _STATIC_ASSERT(STATE_COUNT == 4);
         switch(state) {
 
             default: unreachable(__LINE__); break;
@@ -324,7 +325,7 @@ Program lex_file(const char *fp) {
                         lex_expect(&l, TT_OPENING);
                         Ins i = {.type = IT_FEED, .as.iden = t};
                         da_append(p, i);
-                        state = STATE_DECL_LTM;
+                        state = STATE_DECL_BLOCK;
                     } break;
                 }
             } break;
@@ -348,6 +349,20 @@ Program lex_file(const char *fp) {
             } break;
 
             case STATE_DECL_LTM: {
+                switch(t.type) {
+
+                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or }\n"); break;
+
+                    case TT_CLOSING: state = STATE_REGULAR; break;
+
+                    case TT_IDEN: {
+                        Ins i = {.type = IT_QCALL, .as.iden = t};
+                        da_append(p, i);
+                    } break;
+                }
+            } break;
+
+            case STATE_DECL_BLOCK: {
                 switch(t.type) {
 
                     default: tok_report(t, "Invalid token. Expected tokens are: identifier or }\n"); break;
@@ -390,6 +405,37 @@ Rule *tm_match(TM *tm, Slice state, char c) {
     } return NULL;
 }
 
+typedef enum {MT_TM, MT_LTM} MacType;
+
+typedef struct ltm LTM;
+
+typedef union {
+    TM *tm;
+    LTM *ltm;
+} MacValue;
+
+typedef struct {
+    MacType type;
+    MacValue as;
+} Mac;
+
+typedef struct {
+    Mac *data;
+    size_t len;
+    size_t cap;
+} Macs;
+
+struct ltm {
+    Tok iden;
+    Macs macs;
+};
+
+typedef struct {
+    LTM *data;
+    size_t len;
+    size_t cap;
+} LTMs;
+
 void tm_run(TM *tm, Tape *tape) {
 
     Slice state = tm->rules.data[0].state.raw;
@@ -402,6 +448,20 @@ void tm_run(TM *tm, Tape *tape) {
         state = rule->next.raw;
         c = tape_read_char(*tape);
     }
+
+    printf("Tape after call:\n");
+    tape_print(*tape);
+}
+
+void ltm_run(LTM *ltm, Tape *tape) {
+    for(size_t i = 0; i < ltm->macs.len; ++i) {
+        Mac mac = ltm->macs.data[i];
+        switch(mac.type) {
+            default: unreachable(__LINE__); break;
+            case MT_LTM: ltm_run(mac.as.ltm, tape); break;
+            case MT_TM: tm_run(mac.as.tm, tape); break;
+        }
+    }
 }
 
 void rule_print(Rule r) {
@@ -412,9 +472,30 @@ void rule_print(Rule r) {
     );
 }
 
+bool tm_exists(TMs tms, Tok tm) {
+    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.raw, tm.raw)) return true;
+    return false;
+}
+
+bool ltm_exists(LTMs ltms, Tok ltm) {
+    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.raw, ltm.raw)) return true;
+    return false;
+}
+
+TM *tm_find(TMs tms, Tok tm) {
+    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.raw, tm.raw)) return tms.data + i;
+    return NULL;
+}
+
+LTM *ltm_find(LTMs ltms, Tok ltm) {
+    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.raw, ltm.raw)) return ltms.data + i;
+    return NULL;
+}
+
 void run(Program p) {
 
-    TMs tms = {0};
+    TMs tms   = {0};
+    LTMs ltms = {0};
     Tape tape = {0};
 
     for(size_t k = 0; k < p.len; ++k) {
@@ -425,11 +506,10 @@ void run(Program p) {
             default: unreachable(__LINE__); break;
 
             case IT_DECL_TM: {
-                for(size_t i = 0; i < tms.len; ++i)  {
-                    Tok t = tms.data[i].iden;
-                    if(slice_eq(t.raw, ins.as.iden.raw)) tok_report(ins.as.iden, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
-                }
-                TM tm = { .iden = ins.as.iden };
+                Tok t = ins.as.iden;
+                if(tm_exists(tms, t))   tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                if(ltm_exists(ltms, t)) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                TM tm = { .iden = t };
                 da_append(tms, tm);
             } break;
 
@@ -439,7 +519,13 @@ void run(Program p) {
                 da_append(tm->rules, ins.as.rule);
             } break;
 
-            case IT_DECL_LTM: unimplemented(__LINE__); break;
+            case IT_DECL_LTM: {
+                Tok t = ins.as.iden;
+                if(tm_exists(tms, t))   tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                if(ltm_exists(ltms, t)) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                LTM ltm = {.iden = t };
+                da_append(ltms, ltm);
+            } break;
 
             case IT_FEED: {
                 tape_delete(&tape);
@@ -453,17 +539,30 @@ void run(Program p) {
             } break;
 
             case IT_CALL: {
-                TM *tm = NULL;
-                for(size_t i = 0; i < tms.len; ++i)
-                    if(slice_eq(tms.data[i].iden.raw, ins.as.iden.raw))
-                        tm = tms.data + i;
-                if(tm == NULL) tok_report(ins.as.iden, "Undefined reference to tm\n");
-                tm_run(tm, &tape);
-                printf("Printing tape after:\n");
-                tape_print(tape);
+                TM *tm = tm_find(tms, ins.as.iden);
+                if(tm != NULL) {
+                    tm_run(tm, &tape);
+                    break;
+                }
+
+                LTM *ltm = ltm_find(ltms, ins.as.iden);
+                if(ltm != NULL) {
+                    ltm_run(ltm, &tape);
+                    break;
+                }
+
+                tok_report(ins.as.iden, "Undefined reference to tm / ltm\n");
             } break;
 
-            case IT_COUNT: unimplemented(__LINE__); break;
+            case IT_QCALL: {
+                Mac mac = { .type = MT_TM, .as.tm = tm_find(tms, ins.as.iden) };
+                if(mac.as.tm == NULL) {
+                    mac = (Mac){ .type = MT_LTM, .as.ltm = ltm_find(ltms, ins.as.iden) };
+                    if(mac.as.ltm == NULL) tok_report(ins.as.iden, "Undefined reference to tm / ltm");
+                }
+                LTM *ltm = da_last(ltms);
+                da_append(ltm->macs, mac);
+            } break;
         }
     }
 }
@@ -487,6 +586,7 @@ int main(void) {
                 Rule r = p.data[i].as.rule;
                 rule_print(r);
             } break;
+            case IT_QCALL: tok_print(p.data[i].as.iden); break;
             default: fprintf(stderr, "unhandled\n"); exit(1);
         }
     }
