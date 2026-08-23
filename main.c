@@ -488,6 +488,20 @@ LTM *ltm_find(LTMs ltms, Tok ltm) {
     return NULL;
 }
 
+bool rule_beg_eq(Rule a, Rule b) {
+    return slice_eq(a.state.raw, b.state.raw)
+        && slice_eq(a.read.raw, b.read.raw)
+    ;
+}
+
+bool rule_eq(Rule a, Rule b) {
+    return rule_beg_eq(a, b)
+        && slice_eq(a.write.raw, b.write.raw)
+        && slice_eq(a.dir.raw, b.dir.raw)
+        && slice_eq(a.next.raw, b.next.raw)
+    ;
+}
+
 void run(Program p) {
 
     TMs tms   = {0};
@@ -503,22 +517,27 @@ void run(Program p) {
 
             case IT_DECL_TM: {
                 Tok t = ins.as.iden;
-                if(tm_exists(tms, t))   tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
-                if(ltm_exists(ltms, t)) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                {TM  *prev = tm_find(tms, t);   if(prev != NULL) tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
+                {LTM *prev = ltm_find(ltms, t); if(prev != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
                 TM tm = { .iden = t };
                 da_append(tms, tm);
             } break;
 
             case IT_PUSH_RULE: {
-                // TODO: Check for ambiguity and unicity
                 TM *tm = da_last(tms);
+                for(size_t i = 0; i < tm->rules.len; ++i) {
+                    if(rule_beg_eq(tm->rules.data[i], ins.as.rule)) {
+                        Tok prev = tm->rules.data[i].state;
+                        tok_report(ins.as.iden, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
+                    }
+                }
                 da_append(tm->rules, ins.as.rule);
             } break;
 
             case IT_DECL_LTM: {
                 Tok t = ins.as.iden;
-                if(tm_exists(tms, t))   tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
-                if(ltm_exists(ltms, t)) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", t.loc.fp, t.loc.row, t.loc.col);
+                {TM  *prev = tm_find(tms, t);   if(prev != NULL) tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
+                {LTM *prev = ltm_find(ltms, t); if(prev != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
                 LTM ltm = {.iden = t };
                 da_append(ltms, ltm);
             } break;
