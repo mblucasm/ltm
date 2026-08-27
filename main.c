@@ -12,7 +12,7 @@
 #include <ctype.h>
 #include <stdarg.h>
 
-#define DEBUG
+// #define DEBUG
 #define unreachable   (_unreachable(__LINE__))
 #define unhandled     (_unhandled(__LINE__))
 #define unimplemented (_unimplemented(__LINE__))
@@ -45,7 +45,6 @@ bool is_keyword(Slice s) {
 
 typedef struct {
     const char *fp;
-    const char *start;
     const char *current;
     const char *row_start;
     size_t row;
@@ -81,7 +80,6 @@ typedef struct {
 Lex lex_create(const char *fp, const char *data) {
     return (Lex) {
         .fp = fp,
-        .start = data,
         .current = data,
         .row_start = data,
         .row = 1,
