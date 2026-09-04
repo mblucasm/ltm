@@ -73,7 +73,7 @@ typedef struct {
 
 typedef struct {
     TokType type;
-    Slice raw;
+    Slice slice;
     Loc loc;
 } Tok;
 
@@ -107,15 +107,15 @@ const char *tok_type_to_str(TokType type) {
 void tok_print(Tok t) {
     printf(
         "z.ltm:%lld:%lld ."SLICE_FMT". %s %lld\n",
-        t.loc.row, t.loc.col, SLICE_ARG(t.raw),
-        tok_type_to_str(t.type), t.raw.len
+        t.loc.row, t.loc.col, SLICE_ARG(t.slice),
+        tok_type_to_str(t.type), t.slice.len
     );
 }
 
 Tok tok_create(TokType type, Slice raw, Loc loc) {
     return (Tok) {
         .type = type,
-        .raw = raw,
+        .slice = raw,
         .loc = loc,
     };
 }
@@ -143,7 +143,7 @@ Slice stringParse(const char *start) {
 void tok_report(Tok t, const char *msg, ...) {
     va_list va;
     va_start(va, msg);
-    fprintf(stderr, "%s:%lld:%lld: "SLICE_FMT" ", t.loc.fp, t.loc.row, t.loc.col, SLICE_ARG(t.raw));
+    fprintf(stderr, "%s:%lld:%lld: "SLICE_FMT" ", t.loc.fp, t.loc.row, t.loc.col, SLICE_ARG(t.slice));
     vfprintf(stderr, msg, va);
     va_end(va);
     exit(1);
@@ -190,7 +190,7 @@ redo:
         Slice raw = stringParse(start);
         Tok t = tok_create(TT_STRING, raw, LOCATION);
         if(raw.data[raw.len] != '"') tok_report(t, "Unfinished string\n");
-        ++t.raw.len;
+        ++t.slice.len;
         return t;
     }
 
@@ -210,9 +210,9 @@ Tok lex_next(Lex *l) {
 #ifdef DEBUG
     tok_print(t);
 #endif
-    l->current = t.raw.data + t.raw.len;
+    l->current = t.slice.data + t.slice.len;
     l->row = t.loc.row;
-    l->row_start = t.raw.data - t.loc.col + 1;
+    l->row_start = t.slice.data - t.loc.col + 1;
     return t;
 }
 
@@ -306,12 +306,12 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: keywords or strings\n"); break;
 
                     case TT_KEYWORD: {
-                        if(!slice_eq(t.raw, tm) && !slice_eq(t.raw, ltm)) _unhandled(__LINE__);
+                        if(!slice_eq(t.slice, tm) && !slice_eq(t.slice, ltm)) _unhandled(__LINE__);
                         Tok iden = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = slice_eq(t.raw, tm) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
+                        Ins i = {.type = slice_eq(t.slice, tm) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
                         da_append(p, i);
-                        state = slice_eq(t.raw, tm) ? STATE_DECL_TM : STATE_DECL_LTM;
+                        state = slice_eq(t.slice, tm) ? STATE_DECL_TM : STATE_DECL_LTM;
                     } break;
 
                     case TT_STRING: {
@@ -395,7 +395,7 @@ typedef struct {
 Rule *tm_match(TM *tm, Slice state, char c) {
     for(size_t i = 0; i < tm->rules.len; ++i) {
         Rule *curr = tm->rules.data + i;
-        if(slice_eq(curr->state.raw, state) && ((curr->read.type == TT_STAR || curr->read.raw.data[1] == c))) return curr;
+        if(slice_eq(curr->state.slice, state) && ((curr->read.type == TT_STAR || curr->read.slice.data[1] == c))) return curr;
     } return NULL;
 }
 
@@ -432,14 +432,14 @@ typedef struct {
 
 void tm_run(TM *tm, Tape *tape) {
 
-    Slice state = tm->rules.data[0].state.raw;
+    Slice state = tm->rules.data[0].state.slice;
     char c = tape_read_char(*tape);
 
     Rule *rule;
     while((rule = tm_match(tm, state, c)) != NULL) {
-        tape_write_char(tape, rule->write.type == TT_STAR ? c : rule->write.raw.data[1]);
-        tape_move(tape, dir_from_char(rule->dir.raw.data[0]));
-        state = rule->next.raw;
+        tape_write_char(tape, rule->write.type == TT_STAR ? c : rule->write.slice.data[1]);
+        tape_move(tape, dir_from_char(rule->dir.slice.data[0]));
+        state = rule->next.slice;
         c = tape_read_char(*tape);
     }
 
@@ -461,42 +461,42 @@ void ltm_run(LTM *ltm, Tape *tape) {
 void rule_print(Rule r) {
     printf(
         SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
-        SLICE_ARG(r.state.raw), SLICE_ARG(r.read.raw), SLICE_ARG(r.write.raw),
-        SLICE_ARG(r.dir.raw), SLICE_ARG(r.next.raw)
+        SLICE_ARG(r.state.slice), SLICE_ARG(r.read.slice), SLICE_ARG(r.write.slice),
+        SLICE_ARG(r.dir.slice), SLICE_ARG(r.next.slice)
     );
 }
 
 bool tm_exists(TMs tms, Tok tm) {
-    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.raw, tm.raw)) return true;
+    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.slice, tm.slice)) return true;
     return false;
 }
 
 bool ltm_exists(LTMs ltms, Tok ltm) {
-    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.raw, ltm.raw)) return true;
+    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.slice, ltm.slice)) return true;
     return false;
 }
 
 TM *tm_find(TMs tms, Tok tm) {
-    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.raw, tm.raw)) return tms.data + i;
+    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.slice, tm.slice)) return tms.data + i;
     return NULL;
 }
 
 LTM *ltm_find(LTMs ltms, Tok ltm) {
-    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.raw, ltm.raw)) return ltms.data + i;
+    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.slice, ltm.slice)) return ltms.data + i;
     return NULL;
 }
 
 bool rule_beg_eq(Rule a, Rule b) {
-    return slice_eq(a.state.raw, b.state.raw)
-        && slice_eq(a.read.raw, b.read.raw)
+    return slice_eq(a.state.slice, b.state.slice)
+        && slice_eq(a.read.slice, b.read.slice)
     ;
 }
 
 bool rule_eq(Rule a, Rule b) {
     return rule_beg_eq(a, b)
-        && slice_eq(a.write.raw, b.write.raw)
-        && slice_eq(a.dir.raw, b.dir.raw)
-        && slice_eq(a.next.raw, b.next.raw)
+        && slice_eq(a.write.slice, b.write.slice)
+        && slice_eq(a.dir.slice, b.dir.slice)
+        && slice_eq(a.next.slice, b.next.slice)
     ;
 }
 
@@ -542,8 +542,8 @@ void run(Program p) {
 
             case IT_FEED: {
                 tape_delete(&tape);
-                for(size_t i = 1; i < ins.as.iden.raw.len - 1; ++i) {
-                    tape_write_char(&tape, ins.as.iden.raw.data[i]);
+                for(size_t i = 1; i < ins.as.iden.slice.len - 1; ++i) {
+                    tape_write_char(&tape, ins.as.iden.slice.data[i]);
                     tape_move(&tape, DIR_RIGHT);
                 }
                 tape.head = 0;
