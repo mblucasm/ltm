@@ -417,11 +417,6 @@ typedef struct {
 
 typedef struct {
     Tok iden;
-    Rules rules;
-} TM;
-
-typedef struct {
-    Tok iden;
     Rules rules; // TODO: stb_ds.h
 } Tm;
 
@@ -430,53 +425,26 @@ typedef struct {
     Tm value;
 } Sh_tm;
 
-typedef struct {
-    TM *data;
-    size_t len;
-    size_t cap;
-} TMs;
-
-Rule *tm_match(TM *tm, Slice state, char c) {
+Rule *tm_match(Tm *tm, Slice state, char c) {
     for(size_t i = 0; i < tm->rules.len; ++i) {
         Rule *curr = tm->rules.data + i;
         if(slice_eq(curr->state.slice, state) && ((curr->read.type == TT_STAR || curr->read.slice.data[1] == c))) return curr;
     } return NULL;
 }
 
-typedef enum {MT_TM, MT_LTM} MacType;
-
-typedef struct ltm LTM;
-
-typedef union {
-    TM *tm;
-    LTM *ltm;
-} MacValue;
-
 typedef struct {
-    MacType type;
-    MacValue as;
-} Mac;
-
-typedef struct {
-    Mac *data;
-    size_t len;
-    size_t cap;
-} Macs;
-
-struct ltm {
     Tok iden;
-    Macs macs;
-};
+    SH *idens;
+} Ltm;
 
 typedef struct {
-    LTM *data;
-    size_t len;
-    size_t cap;
-} LTMs;
+    char *key;
+    Ltm value;
+} Sh_ltm;
 
-void tm_run(TM *tm, Tape *tape) {
+void tm_run(Tm *tm, Tape *tape) {
 
-    unimplemented;
+    if(tm->rules.len == 0) return;
 
     Slice state = tm->rules.data[0].state.slice;
     char c = tape_read_char(*tape);
@@ -493,38 +461,20 @@ void tm_run(TM *tm, Tape *tape) {
     tape_print(*tape);
 }
 
-void ltm_run(LTM *ltm, Tape *tape) {
+void ltm_run(Ltm *ltm, Tape *tape) {
 
+    (void)ltm;
+    (void)tape;
     unimplemented;
 
-    for(size_t i = 0; i < ltm->macs.len; ++i) {
-        Mac mac = ltm->macs.data[i];
-        switch(mac.type) {
-            default: _unreachable(__LINE__); break;
-            case MT_LTM: ltm_run(mac.as.ltm, tape); break;
-            case MT_TM: tm_run(mac.as.tm, tape); break;
-        }
-    }
-}
-
-bool tm_exists(TMs tms, Tok tm) {
-    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.slice, tm.slice)) return true;
-    return false;
-}
-
-bool ltm_exists(LTMs ltms, Tok ltm) {
-    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.slice, ltm.slice)) return true;
-    return false;
-}
-
-TM *tm_find(TMs tms, Tok tm) {
-    for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.slice, tm.slice)) return tms.data + i;
-    return NULL;
-}
-
-LTM *ltm_find(LTMs ltms, Tok ltm) {
-    for(size_t i = 0; i < ltms.len; ++i) if(slice_eq(ltms.data[i].iden.slice, ltm.slice)) return ltms.data + i;
-    return NULL;
+    // for(size_t i = 0; i < ltm->macs.len; ++i) {
+    //     Mac mac = ltm->macs.data[i];
+    //     switch(mac.type) {
+    //         default: _unreachable(__LINE__); break;
+    //         case MT_LTM: ltm_run(mac.as.ltm, tape); break;
+    //         case MT_TM: tm_run(mac.as.tm, tape); break;
+    //     }
+    // }
 }
 
 bool rule_beg_eq(Rule a, Rule b) {
@@ -540,16 +490,6 @@ bool rule_eq(Rule a, Rule b) {
         && slice_eq(a.next.slice, b.next.slice)
     ;
 }
-
-typedef struct {
-    Tok iden;
-    SH *idens;
-} Ltm;
-
-typedef struct {
-    char *key;
-    Ltm value;
-} Sh_ltm;
 
 #define shlast(t) (t[shlenu(t) - 1])
 
@@ -597,14 +537,14 @@ void run(Program p) {
             } break;
 
             case IT_PUSH_RULE: {
-                Tm tm = tms[shlenu(tms) - 1].value;
-                for(size_t i = 0; i < tm.rules.len; ++i) {
-                    if(rule_beg_eq(tm.rules.data[i], ins.as.rule)) {
-                        Tok prev = tm.rules.data[i].state;
+                Tm *tm = &shlast(tms).value;
+                for(size_t i = 0; i < tm->rules.len; ++i) {
+                    if(rule_beg_eq(tm->rules.data[i], ins.as.rule)) {
+                        Tok prev = tm->rules.data[i].state;
                         tok_report(ins.as.iden, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
                     }
                 }
-                da_append(tm.rules, ins.as.rule);
+                da_append(tm->rules, ins.as.rule);
             } break;
 
             case IT_FEED: {
@@ -626,12 +566,12 @@ void run(Program p) {
                 slice_to_buf(ins.as.iden.slice, &tbuf);
 
                 if((p = shgetp_null(tms, tbuf.buf)) != NULL) {
-                    tm_run(p, &tape);
+                    tm_run(&((Sh_tm*)p)->value, &tape);
                     break;
                 }
 
                 if((p = shgetp_null(ltms, tbuf.buf)) != NULL) {
-                    ltm_run(p, &tape);
+                    ltm_run(&((Sh_ltm*)p)->value, &tape);
                     break;
                 }
 
