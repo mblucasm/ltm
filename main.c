@@ -19,6 +19,7 @@
 
 #define TM_WORD  "tm"
 #define LTM_WORD "ltm"
+#define IF_WORD  "if"
 
 Buf tbuf = {0};
 
@@ -259,11 +260,17 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_COUNT} InsType;
+typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_COUNT} InsType;
+
+typedef struct {
+    Tok read;
+    size_t jidx; // idx to jump to
+} IfValue;
 
 typedef union {
     Tok iden;
     Rule rule;
+    IfValue iff;
 } InsValue;
 
 typedef struct {
@@ -277,7 +284,7 @@ typedef struct {
     size_t cap;
 } Program;
 
-_STATIC_ASSERT(IT_COUNT == 7);
+_STATIC_ASSERT(IT_COUNT == 8);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "IT_NOP";
@@ -286,6 +293,7 @@ const char *instype_to_str(InsType type) {
         case IT_DECL_LTM: return "IT_DECL_LTM";
         case IT_FEED: return "IT_FEED";
         case IT_CALL: return "IT_CALL";
+        case IT_IF: return "IT_IF";
         case IT_QCALL: return "IT_QCALL"; // Queue call
         default: exit(1);
     }
@@ -323,6 +331,8 @@ Program lex_file(const char *fp) {
     Program p = {0};
     State state = STATE_REGULAR;
 
+    Program stack = {0};
+
     while(t.type != TT_EOF) {
 
         t = lex_next(&l);
@@ -339,7 +349,7 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: keywords or strings\n"); break;
 
                     case TT_KEYWORD: {
-                        if(slice_eq(t.slice, slice_create_raw(TM_WORD)) && slice_eq(t.slice, slice_create_raw(LTM_WORD))) unhandled;
+                        if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context\n");
                         Tok iden = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
                         Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
@@ -393,19 +403,37 @@ Program lex_file(const char *fp) {
             case STATE_DECL_BLOCK: {
                 switch(t.type) {
 
-                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or }\n"); break;
+                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or }\n"); break;
 
-                    case TT_CLOSING: state = STATE_REGULAR; break;
+                    case TT_CLOSING: {
+                        if(stack.len == 0) state = STATE_REGULAR;
+                        else {
+                            Ins *i = da_last(stack);
+                            p.data[i->as.iff.jidx].as.iff.jidx = p.len;
+                            da_pop(stack, stack.len - 1);
+                        }
+                    } break;
 
                     case TT_IDEN: {
                         Ins i = {.type = IT_CALL, .as.iden = t};
                         da_append(p, i);
+                    } break;
+
+                    case TT_KEYWORD: {
+                        if(!slice_eq(t.slice, slice_create_raw(IF_WORD))) tok_report(t, "Invalid token. if is the only valid keyword inside blocks\n");
+                        Tok read = lex_expect(&l, TT_CHAR);
+                        lex_expect(&l, TT_OPENING);
+                        Ins i = {.type = IT_IF, .as.iden = read};
+                        da_append(p, i);
+                        Ins ifi = { .as.iff = { .jidx = p.len - 1 }};
+                        da_append(stack, ifi);
                     } break;
                 }
             } break;
         }
     }
 
+    da_del(stack);
     return p;
 }
 
@@ -510,6 +538,10 @@ void run(Program p) {
             case IT_NOP: break;
             default: _unreachable(__LINE__); break;
 
+            case IT_IF: {
+                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.jidx;
+            } break;
+
             case IT_DECL_TM: {
                 void *p = NULL;
                 Tok t = ins.as.iden;
@@ -554,9 +586,6 @@ void run(Program p) {
             } break;
 
             case IT_CALL: {
-
-                printf("CALLING "SLICE_FMT"\n", SLICE_ARG(ins.as.iden.slice));
-
                 void *p = NULL;
                 slice_to_buf(ins.as.iden.slice, &tbuf);
 
@@ -590,12 +619,13 @@ int main(void) {
 
     shput(kwords, TM_WORD, '\0');
     shput(kwords, LTM_WORD, '\0');
+    shput(kwords, IF_WORD, '\0');
 
     Program p = lex_file("z.ltm");
 
     printf("======================\n");
     for(size_t i = 0; i < p.len; ++i) {
-        printf("%s(%d): ", instype_to_str(p.data[i].type), p.data[i].type);
+        printf("%lld>> %s(%d): ", i, instype_to_str(p.data[i].type), p.data[i].type);
         switch(p.data[i].type) {
             case IT_DECL_LTM:
             case IT_FEED:
@@ -606,6 +636,7 @@ int main(void) {
                 rule_print(r);
             } break;
             case IT_QCALL: tok_print(p.data[i].as.iden); break;
+            case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(p.data[i].as.iff.read.slice), p.data[i].as.iff.jidx); break;
             default: fprintf(stderr, "_unhandled\n"); exit(1);
         }
     }
