@@ -1,5 +1,6 @@
 #include "slice.h"
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,4 +48,18 @@ Slice slice_from_file(const char *fp) {
 
 bool slice_eq(Slice a, Slice b) {
     return (a.len == b.len) && (strncmp(a.data, b.data, a.len) == 0);
+}
+
+char *slice_to_cstr(Slice s) {
+    char *res = malloc((s.len + 1) * sizeof(char));
+    assert(res != NULL);
+    memcpy(res, s.data, s.len * sizeof(char));
+    res[s.len] = '\0';
+    return res;
+}
+
+void slice_to_buf(Slice s, Buf *buf) {
+    if(buf->cap < s.len + 1) buf_set_cap(buf, s.len + 1);
+    memcpy(buf->buf, s.data, s.len * sizeof(char));
+    buf->buf[s.len] = '\0';
 }

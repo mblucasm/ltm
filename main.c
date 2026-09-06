@@ -20,6 +20,8 @@
 #define TM_WORD  "tm"
 #define LTM_WORD "ltm"
 
+Buf tbuf = {0};
+
 void _unreachable(size_t line) {
     fprintf(stderr, "%s:%lld: unreachable\n", __FILE__, line);
     exit(1);
@@ -44,13 +46,13 @@ typedef struct {
 } SH;
 
 SH *kwords = NULL;
+SH *idens = NULL;
 
 bool is_keyword(const char *s) {
     return (shgetp_null(kwords, s) != NULL);
 }
 
 typedef struct {
-    Buf buf;
     const char *fp;
     const char *current;
     const char *row_start;
@@ -94,7 +96,6 @@ typedef struct {
 
 Lex lex_create(const char *fp, const char *data) {
     return (Lex) {
-        .buf = {0},
         .fp = fp,
         .current = data,
         .row_start = data,
@@ -206,12 +207,6 @@ int iscomment(int c) {
     return c != '\0' && c != '\n';
 }
 
-void lex_update_buf(Lex *l, Slice s) {
-    if(l->buf.cap < s.len + 1) buf_set_cap(&l->buf, s.len + 1);
-    memcpy(l->buf.buf, s.data, s.len * sizeof(char));
-    l->buf.buf[s.len] = '\0';
-}
-
 Tok lex_peek(Lex *l) {
 
     redo: {
@@ -229,11 +224,11 @@ Tok lex_peek(Lex *l) {
 
     if(isalpha(*start)) {
         Slice raw = tok_parse(start, isalnum);
-        lex_update_buf(l, raw);
-        return tok_create(is_keyword(l->buf.buf) ? TT_KEYWORD : TT_IDEN, raw, PEEK_LOCATION);
+        slice_to_buf(raw, &tbuf);
+        return tok_create(is_keyword(tbuf.buf) ? TT_KEYWORD : TT_IDEN, raw, PEEK_LOCATION);
     } else if(*start == '"') {
         Slice raw = stringParse(start);
-        lex_update_buf(l, raw);
+        slice_to_buf(raw, &tbuf);
         Tok t = tok_create(TT_STRING, raw, PEEK_LOCATION);
         if(raw.data[raw.len] != '"') tok_report(t, "Unfinished string\n");
         ++t.slice.len;
@@ -241,7 +236,7 @@ Tok lex_peek(Lex *l) {
     }
 
     Slice raw = tok_parse(start, allchars);
-    lex_update_buf(l, raw);
+    slice_to_buf(raw, &tbuf);
 
     if(slice_eq(raw, slice_create_raw("{"))) return tok_create(TT_OPENING, raw, PEEK_LOCATION);
     else if(slice_eq(raw, slice_create_raw("}"))) return tok_create(TT_CLOSING, raw, PEEK_LOCATION);
@@ -426,6 +421,16 @@ typedef struct {
 } TM;
 
 typedef struct {
+    Tok iden;
+    Rules rules; // TODO: stb_ds.h
+} Tm;
+
+typedef struct {
+    char *key;
+    Tm value;
+} Sh_tm;
+
+typedef struct {
     TM *data;
     size_t len;
     size_t cap;
@@ -471,6 +476,8 @@ typedef struct {
 
 void tm_run(TM *tm, Tape *tape) {
 
+    unimplemented;
+
     Slice state = tm->rules.data[0].state.slice;
     char c = tape_read_char(*tape);
 
@@ -487,6 +494,9 @@ void tm_run(TM *tm, Tape *tape) {
 }
 
 void ltm_run(LTM *ltm, Tape *tape) {
+
+    unimplemented;
+
     for(size_t i = 0; i < ltm->macs.len; ++i) {
         Mac mac = ltm->macs.data[i];
         switch(mac.type) {
@@ -531,11 +541,32 @@ bool rule_eq(Rule a, Rule b) {
     ;
 }
 
+typedef struct {
+    Tok iden;
+    SH *idens;
+} Ltm;
+
+typedef struct {
+    char *key;
+    Ltm value;
+} Sh_ltm;
+
+#define shlast(t) (t[shlenu(t) - 1])
+
+#define print_sh(t) \
+    printf("--------------------\n"); \
+    printf("Printing sh: "#t"\n");    \
+    printf("shlen: %lld\n", shlenu(t)); \
+    for(size_t i = 0; i < shlenu(t); ++i) { \
+        printf("key: %s\n", t[i].key); \
+    } \
+    printf("--------------------\n");
+
 void run(Program p) {
 
-    TMs tms   = {0};
-    LTMs ltms = {0};
     Tape tape = {0};
+    Sh_tm *tms  = NULL;
+    Sh_ltm *ltms = NULL;
 
     for(size_t k = 0; k < p.len; ++k) {
         Ins ins = p.data[k];
@@ -545,30 +576,35 @@ void run(Program p) {
             default: _unreachable(__LINE__); break;
 
             case IT_DECL_TM: {
+                void *p = NULL;
                 Tok t = ins.as.iden;
-                {TM  *prev = tm_find(tms, t);   if(prev != NULL) tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
-                {LTM *prev = ltm_find(ltms, t); if(prev != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
-                TM tm = { .iden = t };
-                da_append(tms, tm);
-            } break;
-
-            case IT_PUSH_RULE: {
-                TM *tm = da_last(tms);
-                for(size_t i = 0; i < tm->rules.len; ++i) {
-                    if(rule_beg_eq(tm->rules.data[i], ins.as.rule)) {
-                        Tok prev = tm->rules.data[i].state;
-                        tok_report(ins.as.iden, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
-                    }
-                }
-                da_append(tm->rules, ins.as.rule);
+                slice_to_buf(t.slice, &tbuf);
+                if((p = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", ((Tm*)p)->iden.loc.fp, ((Tm*)p)->iden.loc.row, ((Tm*)p)->iden.loc.col);
+                if((p = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ((Ltm*)p)->iden.loc.fp, ((Ltm*)p)->iden.loc.row, ((Ltm*)p)->iden.loc.col);
+                shput(idens, tbuf.buf, '\0');
+                shput(tms, shlast(idens).key, (Tm){ .iden = t });
             } break;
 
             case IT_DECL_LTM: {
+                void *p = NULL;
                 Tok t = ins.as.iden;
-                {TM  *prev = tm_find(tms, t);   if(prev != NULL) tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
-                {LTM *prev = ltm_find(ltms, t); if(prev != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", prev->iden.loc.fp, prev->iden.loc.row, prev->iden.loc.col);}
-                LTM ltm = {.iden = t };
-                da_append(ltms, ltm);
+                slice_to_buf(t.slice, &tbuf);
+                if((p = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", ((Tm*)p)->iden.loc.fp, ((Tm*)p)->iden.loc.row, ((Tm*)p)->iden.loc.col);
+                if((p = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ((Ltm*)p)->iden.loc.fp, ((Ltm*)p)->iden.loc.row, ((Ltm*)p)->iden.loc.col);
+                shput(idens, tbuf.buf, '\0');
+                Ltm ltm = {.iden = t, .idens = NULL};
+                shput(ltms, shlast(idens).key, ltm);
+            } break;
+
+            case IT_PUSH_RULE: {
+                Tm tm = tms[shlenu(tms) - 1].value;
+                for(size_t i = 0; i < tm.rules.len; ++i) {
+                    if(rule_beg_eq(tm.rules.data[i], ins.as.rule)) {
+                        Tok prev = tm.rules.data[i].state;
+                        tok_report(ins.as.iden, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
+                    }
+                }
+                da_append(tm.rules, ins.as.rule);
             } break;
 
             case IT_FEED: {
@@ -583,15 +619,19 @@ void run(Program p) {
             } break;
 
             case IT_CALL: {
-                TM *tm = tm_find(tms, ins.as.iden);
-                if(tm != NULL) {
-                    tm_run(tm, &tape);
+
+                printf("CALLING "SLICE_FMT"\n", SLICE_ARG(ins.as.iden.slice));
+
+                void *p = NULL;
+                slice_to_buf(ins.as.iden.slice, &tbuf);
+
+                if((p = shgetp_null(tms, tbuf.buf)) != NULL) {
+                    tm_run(p, &tape);
                     break;
                 }
 
-                LTM *ltm = ltm_find(ltms, ins.as.iden);
-                if(ltm != NULL) {
-                    ltm_run(ltm, &tape);
+                if((p = shgetp_null(ltms, tbuf.buf)) != NULL) {
+                    ltm_run(p, &tape);
                     break;
                 }
 
@@ -599,19 +639,19 @@ void run(Program p) {
             } break;
 
             case IT_QCALL: {
-                Mac mac = { .type = MT_TM, .as.tm = tm_find(tms, ins.as.iden) };
-                if(mac.as.tm == NULL) {
-                    mac = (Mac){ .type = MT_LTM, .as.ltm = ltm_find(ltms, ins.as.iden) };
-                    if(mac.as.ltm == NULL) tok_report(ins.as.iden, "Undefined reference to tm / ltm");
-                }
-                LTM *ltm = da_last(ltms);
-                da_append(ltm->macs, mac);
+                Tok t = ins.as.iden;
+                slice_to_buf(t.slice, &tbuf);
+                if(shgetp_null(idens, tbuf.buf) == NULL)  tok_report(t, "Queuing a call to a undefined tm / ltm");
+                Ltm *ltm = &shlast(ltms).value;
+                shput(ltm->idens, shgets(idens, tbuf.buf).key, '\0');
             } break;
         }
     }
 }
 
 int main(void) {
+
+    sh_new_arena(idens);
 
     shput(kwords, TM_WORD, '\0');
     shput(kwords, LTM_WORD, '\0');

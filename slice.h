@@ -1,6 +1,7 @@
 #ifndef LTM_SLICE_H
 #define LTM_SLICE_H
 
+#include "buffer.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -18,5 +19,7 @@ Slice slice_create(const char *data, size_t len);
 Slice slice_slice(Slice *s, char delim);
 Slice slice_from_file(const char *fp);
 bool slice_eq(Slice a, Slice b);
+char *slice_to_cstr(Slice s);
+void slice_to_buf(Slice s, Buf *buf);
 
 #endif // LTM_SLICE_H
