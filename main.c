@@ -20,6 +20,7 @@
 #define TM_WORD  "tm"
 #define LTM_WORD "ltm"
 #define IF_WORD  "if"
+#define ELSE_WORD "else"
 
 Buf tbuf = {0};
 
@@ -260,7 +261,7 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_COUNT} InsType;
+typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_ELSE, IT_COUNT} InsType;
 
 typedef struct {
     Tok read;
@@ -284,7 +285,7 @@ typedef struct {
     size_t cap;
 } Program;
 
-_STATIC_ASSERT(IT_COUNT == 8);
+_STATIC_ASSERT(IT_COUNT == 9);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "IT_NOP";
@@ -294,6 +295,7 @@ const char *instype_to_str(InsType type) {
         case IT_FEED: return "IT_FEED";
         case IT_CALL: return "IT_CALL";
         case IT_IF: return "IT_IF";
+        case IT_ELSE: return "IT_ELSE";
         case IT_QCALL: return "IT_QCALL"; // Queue call
         default: exit(1);
     }
@@ -409,7 +411,7 @@ Program lex_file(const char *fp) {
                         if(ifstack.len == 0) state = STATE_REGULAR;
                         else {
                             Ins *i = da_last(ifstack);
-                            p.data[i->as.iff.jidx].as.iff.jidx = p.len;
+                            p.data[i->as.iff.jidx].as.iff.jidx = p.len + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
                             da_pop(ifstack, ifstack.len - 1);
                         }
                     } break;
@@ -420,13 +422,20 @@ Program lex_file(const char *fp) {
                     } break;
 
                     case TT_KEYWORD: {
-                        if(!slice_eq(t.slice, slice_create_raw(IF_WORD))) tok_report(t, "Invalid token. if is the only valid keyword inside blocks\n");
-                        Tok read = lex_expect(&l, TT_CHAR);
-                        lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = IT_IF, .as.iden = read};
-                        da_append(p, i);
-                        Ins ifi = { .as.iff = { .jidx = p.len - 1 }};
-                        da_append(ifstack, ifi);
+                        if(slice_eq(t.slice, slice_create_raw(IF_WORD))) {
+                            Tok read = lex_expect(&l, TT_CHAR);
+                            lex_expect(&l, TT_OPENING);
+                            Ins i = {.type = IT_IF, .as.iff = { .read = read }};
+                            da_append(p, i);
+                            Ins ifi = { .as.iff = { .jidx = p.len - 1 }};
+                            da_append(ifstack, ifi);
+                        } else if(slice_eq(t.slice, slice_create_raw(ELSE_WORD))) {
+                            lex_expect(&l, TT_OPENING);
+                            Ins i = {.type = IT_ELSE};
+                            da_append(p, i);
+                            Ins elsei = { .as.iff = { .jidx = p.len - 1 }};
+                            da_append(ifstack, elsei);
+                        } else tok_report(t, "Invalid token. if, else are the only valid keywords inside blocks\n");
                     } break;
                 }
             } break;
@@ -538,8 +547,10 @@ void run(Program p) {
             case IT_NOP: break;
             default: _unreachable(__LINE__); break;
 
+            case IT_ELSE: k = ins.as.iff.jidx - 1; break; // Jump to the previous idx. Then for loop adds 1.
+
             case IT_IF: {
-                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.jidx;
+                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.jidx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
             case IT_DECL_TM: {
@@ -620,6 +631,7 @@ int main(void) {
     shput(kwords, TM_WORD, '\0');
     shput(kwords, LTM_WORD, '\0');
     shput(kwords, IF_WORD, '\0');
+    shput(kwords, ELSE_WORD, '\0');
 
     Program p = lex_file("z.ltm");
 
@@ -637,6 +649,7 @@ int main(void) {
             } break;
             case IT_QCALL: tok_print(p.data[i].as.iden); break;
             case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(p.data[i].as.iff.read.slice), p.data[i].as.iff.jidx); break;
+            case IT_ELSE: printf("Jump to: %lld\n", p.data[i].as.iff.jidx); break;
             default: fprintf(stderr, "_unhandled\n"); exit(1);
         }
     }
