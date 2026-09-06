@@ -613,7 +613,6 @@ void run(Program p) {
 
 int main(void) {
 
-    sh_new_arena(kwords);
     shput(kwords, TM_WORD, '\0');
     shput(kwords, LTM_WORD, '\0');
 
