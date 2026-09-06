@@ -17,6 +17,9 @@
 #define unhandled     (_unhandled(__LINE__))
 #define unimplemented (_unimplemented(__LINE__))
 
+#define TM_WORD  "tm"
+#define LTM_WORD "ltm"
+
 void _unreachable(size_t line) {
     fprintf(stderr, "%s:%lld: unreachable\n", __FILE__, line);
     exit(1);
@@ -32,18 +35,22 @@ void _unimplemented(size_t line) {
     exit(1);
 }
 
-Slice kwords[] = {
-    {.data = "tm", .len = 2},
-    {.data = "ltm", .len = 3},
-};
-size_t kwlen = sizeof(kwords) / sizeof(kwords[0]);
+#define STB_DS_IMPLEMENTATION
+#include "stb_ds.h"
 
-bool is_keyword(Slice s) {
-    for(size_t i = 0; i < kwlen; ++i) if(slice_eq(s, kwords[i])) return true;
-    return false;
+typedef struct {
+    char *key;
+    char value;
+} SH;
+
+SH *kwords = NULL;
+
+bool is_keyword(const char *s) {
+    return (shgetp_null(kwords, s) != NULL);
 }
 
 typedef struct {
+    Buf buf;
     const char *fp;
     const char *current;
     const char *row_start;
@@ -77,8 +84,17 @@ typedef struct {
     Loc loc;
 } Tok;
 
+typedef struct {
+    Tok state;
+    Tok read;
+    Tok write;
+    Tok dir;
+    Tok next;
+} Rule;
+
 Lex lex_create(const char *fp, const char *data) {
     return (Lex) {
+        .buf = {0},
         .fp = fp,
         .current = data,
         .row_start = data,
@@ -153,56 +169,88 @@ int wholeline(int c) {
     return c != '\0' && c != '\n' && c != '\r';
 }
 
-#define LOCATION ((Loc){.fp = l->fp, .row = row, .col = start - row_start + 1})
+void rule_print(Rule r) {
+    printf(
+        SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
+        SLICE_ARG(r.state.slice), SLICE_ARG(r.read.slice), SLICE_ARG(r.write.slice),
+        SLICE_ARG(r.dir.slice), SLICE_ARG(r.next.slice)
+    );
+}
 
-Tok lex_peek(Lex *l) {
+Loc lex_location(Lex *l) {
+    return (Loc) {
+        .fp = l->fp,
+        .row = l->row,
+        .col = l->current - l->row_start + 1
+    };
+}
 
-    size_t row = l->row;
-    const char *row_start = l->row_start;
+#define PEEK_LOCATION ((Loc){.fp = l->fp, .row = row, .col = start - row_start + 1})
 
-redo:
-    while(isspace(*l->current)) {
+void lex_skip(Lex *l, int (*pred)(int)) {
+    while(pred(*l->current)) {
         if(*l->current == '\n') {
-            ++row;
-            row_start = l->current + 1;
+            ++l->row;
+            l->row_start = l->current + 1;
         }
         ++l->current;
     }
+}
 
-    const char *start = l->current;
-    if(*start == '\0') return tok_create(TT_EOF, (Slice){0}, LOCATION);
+const char *advance_while(const char *start, int (*pred)(int)) {
+    while(pred(*start)) ++start;
+    return start;
+}
 
-    if(start[0] == '-' && start[1] == '-') {
-        while(*l->current != '\n') {
-            if(*l->current == '\n') {
-                ++row;
-                row_start = l->current + 1;
-            }
-            ++l->current;
+int iscomment(int c) {
+    return c != '\0' && c != '\n';
+}
+
+void lex_update_buf(Lex *l, Slice s) {
+    if(l->buf.cap < s.len + 1) buf_set_cap(&l->buf, s.len + 1);
+    memcpy(l->buf.buf, s.data, s.len * sizeof(char));
+    l->buf.buf[s.len] = '\0';
+}
+
+Tok lex_peek(Lex *l) {
+
+    redo: {
+        lex_skip(l, isspace);
+        if(*l->current == '\0') return tok_create(TT_EOF, (Slice){0}, lex_location(l));
+        if(l->current[0] == '-' && l->current[1] == '-') {
+            lex_skip(l, iscomment);
+            goto redo;
         }
-        goto redo;
     }
+
+    size_t row = l->row;
+    const char *start = l->current;
+    const char *row_start = l->row_start;
 
     if(isalpha(*start)) {
         Slice raw = tok_parse(start, isalnum);
-        return tok_create(is_keyword(raw) ? TT_KEYWORD : TT_IDEN, raw, LOCATION);
+        lex_update_buf(l, raw);
+        return tok_create(is_keyword(l->buf.buf) ? TT_KEYWORD : TT_IDEN, raw, PEEK_LOCATION);
     } else if(*start == '"') {
         Slice raw = stringParse(start);
-        Tok t = tok_create(TT_STRING, raw, LOCATION);
+        lex_update_buf(l, raw);
+        Tok t = tok_create(TT_STRING, raw, PEEK_LOCATION);
         if(raw.data[raw.len] != '"') tok_report(t, "Unfinished string\n");
         ++t.slice.len;
         return t;
     }
 
     Slice raw = tok_parse(start, allchars);
-    if(slice_eq(raw, slice_create_raw("{"))) return tok_create(TT_OPENING, raw, LOCATION);
-    else if(slice_eq(raw, slice_create_raw("}"))) return tok_create(TT_CLOSING, raw, LOCATION);
-    else if(slice_eq(raw, slice_create_raw("*"))) return tok_create(TT_STAR, raw, LOCATION);
-    else if(raw.len == 3 && raw.data[0] == '\'' && raw.data[2] == '\'') return tok_create(TT_CHAR, raw, LOCATION);
-    else if(raw.len == 1 && (*raw.data == '<' || *raw.data == '-' || *raw.data == '>')) return tok_create(TT_DIR, raw, LOCATION);
-    else if(raw.len == 2 && raw.data[0] == '=' && raw.data[1] == '>') return tok_create(TT_ARROW, raw, LOCATION);
+    lex_update_buf(l, raw);
 
-    return tok_create(TT_UNKNOWN, raw, LOCATION);
+    if(slice_eq(raw, slice_create_raw("{"))) return tok_create(TT_OPENING, raw, PEEK_LOCATION);
+    else if(slice_eq(raw, slice_create_raw("}"))) return tok_create(TT_CLOSING, raw, PEEK_LOCATION);
+    else if(slice_eq(raw, slice_create_raw("*"))) return tok_create(TT_STAR, raw, PEEK_LOCATION);
+    else if(raw.len == 3 && raw.data[0] == '\'' && raw.data[2] == '\'') return tok_create(TT_CHAR, raw, PEEK_LOCATION);
+    else if(raw.len == 1 && (*raw.data == '<' || *raw.data == '-' || *raw.data == '>')) return tok_create(TT_DIR, raw, PEEK_LOCATION);
+    else if(raw.len == 2 && raw.data[0] == '=' && raw.data[1] == '>') return tok_create(TT_ARROW, raw, PEEK_LOCATION);
+
+    return tok_create(TT_UNKNOWN, raw, PEEK_LOCATION);
 }
 
 Tok lex_next(Lex *l) {
@@ -217,14 +265,6 @@ Tok lex_next(Lex *l) {
 }
 
 typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_COUNT} InsType;
-
-typedef struct {
-    Tok state;
-    Tok read;
-    Tok write;
-    Tok dir;
-    Tok next;
-} Rule;
 
 typedef union {
     Tok iden;
@@ -267,8 +307,6 @@ Dir dir_from_char(char c) {
     }
 }
 
-Slice tm, ltm;
-
 Tok lex_expect2(Lex *l, TokType type1, TokType type2) {
     Tok t = lex_next(l);
     if(t.type != type1 && t.type != type2) tok_report(t, "Unexpected token type %s. Expected was %s or %s", tok_type_to_str(t.type), tok_type_to_str(type1), tok_type_to_str(type2));
@@ -306,12 +344,12 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: keywords or strings\n"); break;
 
                     case TT_KEYWORD: {
-                        if(!slice_eq(t.slice, tm) && !slice_eq(t.slice, ltm)) _unhandled(__LINE__);
+                        if(slice_eq(t.slice, slice_create_raw(TM_WORD)) && slice_eq(t.slice, slice_create_raw(LTM_WORD))) unhandled;
                         Tok iden = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = slice_eq(t.slice, tm) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
+                        Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
                         da_append(p, i);
-                        state = slice_eq(t.slice, tm) ? STATE_DECL_TM : STATE_DECL_LTM;
+                        state = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? STATE_DECL_TM : STATE_DECL_LTM;
                     } break;
 
                     case TT_STRING: {
@@ -337,6 +375,7 @@ Program lex_file(const char *fp) {
                         Tok dir   = lex_expect(&l, TT_DIR);
                         Tok next  = lex_expect(&l, TT_IDEN);
                         Ins i = {.type = IT_PUSH_RULE, .as.rule = {.state = t, .read = read, .write = write, .dir = dir, .next = next}};
+                        rule_print(i.as.rule);
                         da_append(p, i);
                     } break;
                 }
@@ -458,14 +497,6 @@ void ltm_run(LTM *ltm, Tape *tape) {
     }
 }
 
-void rule_print(Rule r) {
-    printf(
-        SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT" "SLICE_FMT"\n",
-        SLICE_ARG(r.state.slice), SLICE_ARG(r.read.slice), SLICE_ARG(r.write.slice),
-        SLICE_ARG(r.dir.slice), SLICE_ARG(r.next.slice)
-    );
-}
-
 bool tm_exists(TMs tms, Tok tm) {
     for(size_t i = 0; i < tms.len; ++i) if(slice_eq(tms.data[i].iden.slice, tm.slice)) return true;
     return false;
@@ -582,8 +613,9 @@ void run(Program p) {
 
 int main(void) {
 
-    tm = slice_create_raw("tm");
-    ltm = slice_create_raw("ltm");
+    sh_new_arena(kwords);
+    shput(kwords, TM_WORD, '\0');
+    shput(kwords, LTM_WORD, '\0');
 
     Program p = lex_file("z.ltm");
 

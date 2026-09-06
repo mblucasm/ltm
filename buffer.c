@@ -11,6 +11,18 @@ void buf_delete(Buf *buf) {
     buf->cap = 0;
 }
 
+void buf_set_cap(Buf *buf, size_t cap) {
+
+    assert(buf != NULL);
+    assert(cap > buf->cap);
+
+    buf->buf = realloc(buf->buf, cap * sizeof(char));
+    assert(buf->buf != NULL);
+
+    memset(buf->buf + buf->cap, 0, (cap - buf->cap) * sizeof(char));
+    buf->cap = cap;
+}
+
 void buf_write_char(Buf *buf, size_t idx, char c) {
     
     assert(buf != NULL);

@@ -10,6 +10,7 @@ typedef struct {
 
 void buf_delete(Buf *buf);
 void buf_write_char(Buf *buf, size_t idx, char c);
+void buf_set_cap(Buf *buf, size_t cap);
 void buf_print(Buf buf);
 void buf_print_inverted(Buf buf);
 
