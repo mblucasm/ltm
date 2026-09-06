@@ -67,6 +67,7 @@
     } while(0)
 //
 
+/*TODO:
 // pop elem from dinamic array
 #define da_pop(da, idx)                                                                   \
     do {                                                                                  \
@@ -75,7 +76,7 @@
         for(size_t __da__iter__i__ = idx; __da__iter__i__ < (da).len; ++__da__iter__i__)  \
             (da).data[__da__iter__i__] = (da).data[__da__iter__i__ + 1];                \
     } while(0)
-//
+//*/
 
 // delete full dinamic array
 #define da_del(da)        \

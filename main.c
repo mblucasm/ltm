@@ -412,7 +412,7 @@ Program lex_file(const char *fp) {
                         else {
                             Ins *i = da_last(ifstack);
                             p.data[i->as.iff.jidx].as.iff.jidx = p.len + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
-                            da_pop(ifstack, ifstack.len - 1);
+                            --ifstack.len;
                         }
                     } break;
 
