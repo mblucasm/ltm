@@ -425,13 +425,6 @@ typedef struct {
     Tm value;
 } Sh_tm;
 
-Rule *tm_match(Tm *tm, Slice state, char c) {
-    for(size_t i = 0; i < tm->rules.len; ++i) {
-        Rule *curr = tm->rules.data + i;
-        if(slice_eq(curr->state.slice, state) && ((curr->read.type == TT_STAR || curr->read.slice.data[1] == c))) return curr;
-    } return NULL;
-}
-
 typedef struct {
     Tok iden;
     SH *idens;
@@ -441,6 +434,16 @@ typedef struct {
     char *key;
     Ltm value;
 } Sh_ltm;
+
+Sh_tm *tms  = NULL;
+Sh_ltm *ltms = NULL;
+
+Rule *tm_match(Tm *tm, Slice state, char c) {
+    for(size_t i = 0; i < tm->rules.len; ++i) {
+        Rule *curr = tm->rules.data + i;
+        if(slice_eq(curr->state.slice, state) && ((curr->read.type == TT_STAR || curr->read.slice.data[1] == c))) return curr;
+    } return NULL;
+}
 
 void tm_run(Tm *tm, Tape *tape) {
 
@@ -462,19 +465,13 @@ void tm_run(Tm *tm, Tape *tape) {
 }
 
 void ltm_run(Ltm *ltm, Tape *tape) {
-
-    (void)ltm;
-    (void)tape;
-    unimplemented;
-
-    // for(size_t i = 0; i < ltm->macs.len; ++i) {
-    //     Mac mac = ltm->macs.data[i];
-    //     switch(mac.type) {
-    //         default: _unreachable(__LINE__); break;
-    //         case MT_LTM: ltm_run(mac.as.ltm, tape); break;
-    //         case MT_TM: tm_run(mac.as.tm, tape); break;
-    //     }
-    // }
+    size_t len = shlenu(ltm->idens);
+    for(size_t i = 0; i < len; ++i) {
+        void *p = NULL;
+        if((p = shgetp_null(tms, ltm->idens[i].key)) != NULL) tm_run(&((Sh_tm*)p)->value, tape);
+        else if((p = shgetp_null(ltms, ltm->idens[i].key)) != NULL) ltm_run(&((Sh_ltm*)p)->value, tape);
+        else unreachable;
+    }
 }
 
 bool rule_beg_eq(Rule a, Rule b) {
@@ -505,8 +502,6 @@ bool rule_eq(Rule a, Rule b) {
 void run(Program p) {
 
     Tape tape = {0};
-    Sh_tm *tms  = NULL;
-    Sh_ltm *ltms = NULL;
 
     for(size_t k = 0; k < p.len; ++k) {
         Ins ins = p.data[k];
