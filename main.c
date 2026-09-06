@@ -331,7 +331,7 @@ Program lex_file(const char *fp) {
     Program p = {0};
     State state = STATE_REGULAR;
 
-    Program stack = {0};
+    Program ifstack = {0};
 
     while(t.type != TT_EOF) {
 
@@ -406,11 +406,11 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or }\n"); break;
 
                     case TT_CLOSING: {
-                        if(stack.len == 0) state = STATE_REGULAR;
+                        if(ifstack.len == 0) state = STATE_REGULAR;
                         else {
-                            Ins *i = da_last(stack);
+                            Ins *i = da_last(ifstack);
                             p.data[i->as.iff.jidx].as.iff.jidx = p.len;
-                            da_pop(stack, stack.len - 1);
+                            da_pop(ifstack, ifstack.len - 1);
                         }
                     } break;
 
@@ -426,14 +426,14 @@ Program lex_file(const char *fp) {
                         Ins i = {.type = IT_IF, .as.iden = read};
                         da_append(p, i);
                         Ins ifi = { .as.iff = { .jidx = p.len - 1 }};
-                        da_append(stack, ifi);
+                        da_append(ifstack, ifi);
                     } break;
                 }
             } break;
         }
     }
 
-    da_del(stack);
+    da_del(ifstack);
     return p;
 }
 
