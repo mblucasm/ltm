@@ -464,7 +464,7 @@ typedef struct {
 
 typedef struct {
     Tok iden;
-    SH *idens;
+    char **idens;
 } Ltm;
 
 typedef struct {
@@ -491,7 +491,7 @@ void tm_run(Tm *tm, Tape *tape) {
 
     Rule *rule;
     while((rule = tm_match(tm, state, c)) != NULL) {
-        tape_write_char(tape, rule->write.type == TT_STAR ? c : rule->write.slice.data[1]);
+        if(rule->write.type != TT_STAR) tape_write_char(tape, rule->write.slice.data[1]);
         tape_move(tape, dir_from_char(rule->dir.slice.data[0]));
         state = rule->next.slice;
         c = tape_read_char(*tape);
@@ -502,11 +502,12 @@ void tm_run(Tm *tm, Tape *tape) {
 }
 
 void ltm_run(Ltm *ltm, Tape *tape) {
-    size_t len = shlenu(ltm->idens);
+    size_t len = arrlenu(ltm->idens);
+    printf("Running ltm for %lld macs\n", len);
     for(size_t i = 0; i < len; ++i) {
         void *p = NULL;
-        if((p = shgetp_null(tms, ltm->idens[i].key)) != NULL) tm_run(&((Sh_tm*)p)->value, tape);
-        else if((p = shgetp_null(ltms, ltm->idens[i].key)) != NULL) ltm_run(&((Sh_ltm*)p)->value, tape);
+        if((p = shgetp_null(tms, ltm->idens[i])) != NULL) tm_run(&((Sh_tm*)p)->value, tape);
+        else if((p = shgetp_null(ltms, ltm->idens[i])) != NULL) ltm_run(&((Sh_ltm*)p)->value, tape);
         else unreachable;
     }
 }
@@ -618,7 +619,7 @@ void run(Program p) {
                 slice_to_buf(t.slice, &tbuf);
                 if(shgetp_null(idens, tbuf.buf) == NULL)  tok_report(t, "Queuing a call to a undefined tm / ltm");
                 Ltm *ltm = &shlast(ltms).value;
-                shput(ltm->idens, shgets(idens, tbuf.buf).key, '\0');
+                arrput(ltm->idens, shgets(idens, tbuf.buf).key);
             } break;
         }
     }
