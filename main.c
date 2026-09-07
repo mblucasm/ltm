@@ -262,7 +262,7 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
+typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
 
 typedef struct {
     Tok read;
@@ -273,6 +273,7 @@ typedef union {
     Tok iden;
     Rule rule;
     IfValue iff;
+    Dir dir;
 } InsValue;
 
 typedef struct {
@@ -286,7 +287,7 @@ typedef struct {
     size_t cap;
 } Program;
 
-_STATIC_ASSERT(IT_COUNT == 10);
+_STATIC_ASSERT(IT_COUNT == 12);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "IT_NOP";
@@ -298,6 +299,8 @@ const char *instype_to_str(InsType type) {
         case IT_IF: return "IT_IF";
         case IT_ELSE: return "IT_ELSE";
         case IT_PRINT: return "IT_PRINT";
+        case IT_WRITE: return "IT_WRITE";
+        case IT_MOVE: return "IT_MOVE";
         case IT_QCALL: return "IT_QCALL"; // Queue call
         default: exit(1);
     }
@@ -311,6 +314,15 @@ Dir dir_from_char(char c) {
         case '-': return DIR_NONE;
         case '>': return DIR_RIGHT;
         default: _unreachable(__LINE__); exit(1);
+    }
+}
+
+char dir_to_char(Dir d) {
+    switch(d) {
+        case DIR_LEFT:  return '<';
+        case DIR_NONE:  return '-';
+        case DIR_RIGHT: return '>';
+        default: unreachable; exit(1);
     }
 }
 
@@ -407,7 +419,17 @@ Program lex_file(const char *fp) {
             case STATE_DECL_BLOCK: {
                 switch(t.type) {
 
-                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or }\n"); break;
+                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or strings or < or > or }\n"); break;
+
+                    case TT_STRING: {
+                        Ins i = {.type = IT_WRITE, .as.iden = t};
+                        da_append(p, i);
+                    } break;
+
+                    case TT_DIR: {
+                        Ins i = {.type = IT_MOVE, .as.dir = dir_from_char(t.slice.data[0])};
+                        da_append(p, i);
+                    } break;
 
                     case TT_CLOSING: {
                         if(ifstack.len == 0) state = STATE_REGULAR;
@@ -623,6 +645,15 @@ void run(Program p) {
             } break;
 
             case IT_PRINT: tape_print(tape); break;
+
+            case IT_MOVE: tape_move(&tape, ins.as.dir); break;
+
+            case IT_WRITE: {
+                for(size_t i = 1; i < ins.as.iden.slice.len - 1; ++i) {
+                    tape_write_char(&tape, ins.as.iden.slice.data[i]);
+                    tape_move(&tape, DIR_RIGHT);
+                }
+            } break;
         }
     }
 }
@@ -655,6 +686,8 @@ int main(void) {
             case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(p.data[i].as.iff.read.slice), p.data[i].as.iff.jidx); break;
             case IT_ELSE: printf("Jump to: %lld\n", p.data[i].as.iff.jidx); break;
             case IT_PRINT: printf("\n"); break;
+            case IT_WRITE: tok_print(p.data[i].as.iden); break;
+            case IT_MOVE: printf("%c\n", dir_to_char(p.data[i].as.dir)); break;
             default: fprintf(stderr, "_unhandled\n"); exit(1);
         }
     }
