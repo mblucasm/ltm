@@ -21,6 +21,7 @@
 #define LTM_WORD "ltm"
 #define IF_WORD  "if"
 #define ELSE_WORD "else"
+#define PRINT_WORD "print"
 
 Buf tbuf = {0};
 
@@ -261,7 +262,7 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_ELSE, IT_COUNT} InsType;
+typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_FEED, IT_QCALL, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
 
 typedef struct {
     Tok read;
@@ -285,7 +286,7 @@ typedef struct {
     size_t cap;
 } Program;
 
-_STATIC_ASSERT(IT_COUNT == 9);
+_STATIC_ASSERT(IT_COUNT == 10);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "IT_NOP";
@@ -296,6 +297,7 @@ const char *instype_to_str(InsType type) {
         case IT_CALL: return "IT_CALL";
         case IT_IF: return "IT_IF";
         case IT_ELSE: return "IT_ELSE";
+        case IT_PRINT: return "IT_PRINT";
         case IT_QCALL: return "IT_QCALL"; // Queue call
         default: exit(1);
     }
@@ -351,7 +353,7 @@ Program lex_file(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: keywords or strings\n"); break;
 
                     case TT_KEYWORD: {
-                        if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context\n");
+                        if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context. Valid keywords are: %s and %s\n", TM_WORD, LTM_WORD);
                         Tok iden = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
                         Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
@@ -435,7 +437,10 @@ Program lex_file(const char *fp) {
                             da_append(p, i);
                             Ins elsei = { .as.iff = { .jidx = p.len - 1 }};
                             da_append(ifstack, elsei);
-                        } else tok_report(t, "Invalid token. if, else are the only valid keywords inside blocks\n");
+                        } else if(slice_eq(t.slice, slice_create_raw(PRINT_WORD))) {
+                            Ins i = {.type = IT_PRINT};
+                            da_append(p, i);
+                        } else tok_report(t, "Invalid token. if, else and print are the only valid keywords inside blocks\n");
                     } break;
                 }
             } break;
@@ -496,9 +501,6 @@ void tm_run(Tm *tm, Tape *tape) {
         state = rule->next.slice;
         c = tape_read_char(*tape);
     }
-
-    printf("Tape after call:\n");
-    tape_print(*tape);
 }
 
 void ltm_run(Ltm *ltm, Tape *tape) {
@@ -593,8 +595,6 @@ void run(Program p) {
                     tape_move(&tape, DIR_RIGHT);
                 }
                 tape.head = 0;
-                printf("Printing tape before:\n");
-                tape_print(tape);
             } break;
 
             case IT_CALL: {
@@ -621,6 +621,8 @@ void run(Program p) {
                 Ltm *ltm = &shlast(ltms).value;
                 arrput(ltm->idens, shgets(idens, tbuf.buf).key);
             } break;
+
+            case IT_PRINT: tape_print(tape); break;
         }
     }
 }
@@ -633,6 +635,7 @@ int main(void) {
     shput(kwords, LTM_WORD, '\0');
     shput(kwords, IF_WORD, '\0');
     shput(kwords, ELSE_WORD, '\0');
+    shput(kwords, PRINT_WORD, '\0');
 
     Program p = lex_file("z.ltm");
 
@@ -651,6 +654,7 @@ int main(void) {
             case IT_QCALL: tok_print(p.data[i].as.iden); break;
             case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(p.data[i].as.iff.read.slice), p.data[i].as.iff.jidx); break;
             case IT_ELSE: printf("Jump to: %lld\n", p.data[i].as.iff.jidx); break;
+            case IT_PRINT: printf("\n"); break;
             default: fprintf(stderr, "_unhandled\n"); exit(1);
         }
     }
