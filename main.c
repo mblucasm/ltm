@@ -1,5 +1,3 @@
-// TODO: Pivot to stb_ds.h
-
 #include "tape.h"
 #include "slice.h"
 #include "darray.h"
