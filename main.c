@@ -577,21 +577,21 @@ void run(Program p) {
             } break;
 
             case IT_DECL_TM: {
-                void *p = NULL;
+                union {Sh_tm* tm; Sh_ltm *ltm;} p = {0};
                 Tok t = ins.as.iden;
                 slice_to_buf(t.slice, &tbuf);
-                if((p = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", ((Tm*)p)->iden.loc.fp, ((Tm*)p)->iden.loc.row, ((Tm*)p)->iden.loc.col);
-                if((p = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ((Ltm*)p)->iden.loc.fp, ((Ltm*)p)->iden.loc.row, ((Ltm*)p)->iden.loc.col);
+                if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.iden.loc.fp, p.tm->value.iden.loc.row, p.tm->value.iden.loc.col);
+                if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.iden.loc.fp, p.ltm->value.iden.loc.row, p.ltm->value.iden.loc.col);
                 shput(idens, tbuf.buf, '\0');
                 shput(tms, shlast(idens).key, (Tm){ .iden = t });
             } break;
 
             case IT_DECL_LTM: {
-                void *p = NULL;
+                union {Sh_tm* tm; Sh_ltm *ltm;} p = {0};
                 Tok t = ins.as.iden;
                 slice_to_buf(t.slice, &tbuf);
-                if((p = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", ((Tm*)p)->iden.loc.fp, ((Tm*)p)->iden.loc.row, ((Tm*)p)->iden.loc.col);
-                if((p = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ((Ltm*)p)->iden.loc.fp, ((Ltm*)p)->iden.loc.row, ((Ltm*)p)->iden.loc.col);
+                if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.iden.loc.fp, p.tm->value.iden.loc.row, p.tm->value.iden.loc.col);
+                if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.iden.loc.fp, p.ltm->value.iden.loc.row, p.ltm->value.iden.loc.col);
                 shput(idens, tbuf.buf, '\0');
                 Ltm ltm = {.iden = t, .idens = NULL};
                 shput(ltms, shlast(idens).key, ltm);
