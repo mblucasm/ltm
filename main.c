@@ -262,16 +262,12 @@ Tok lex_next(Lex *l) {
 
 typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_RETURN, IT_FEED, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
 
-typedef struct {
-    Tok read;
-    size_t jidx; // idx to jump to
-} IfValue;
-
 typedef union {
-    Tok iden;
     Rule rule;
-    IfValue iff;
+    Tok tok;
     Dir dir;
+    size_t idx;
+    struct {Tok read; size_t idx;} iff;
 } InsValue;
 
 typedef struct {
@@ -358,9 +354,9 @@ Ins *gen_ir(const char *fp) {
 
                     case TT_KEYWORD: {
                         if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context. Valid keywords are: %s and %s\n", TM_WORD, LTM_WORD);
-                        Tok iden = lex_expect(&l, TT_IDEN);
+                        Tok tok = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.iden = iden};
+                        Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.tok = tok};
                         arrput(ir, i);
                         state = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? STATE_DECL_TM : STATE_DECL_LTM;
                     } break;
@@ -368,7 +364,7 @@ Ins *gen_ir(const char *fp) {
                     case TT_STRING: {
                         lex_expect(&l, TT_ARROW);
                         lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = IT_FEED, .as.iden = t};
+                        Ins i = {.type = IT_FEED, .as.tok = t};
                         arrput(ir, i);
                         state = STATE_DECL_BLOCK;
                     } break;
@@ -406,7 +402,7 @@ Ins *gen_ir(const char *fp) {
                     } break;
 
                     case TT_IDEN: {
-                        Ins i = {.type = IT_CALL, .as.iden = t};
+                        Ins i = {.type = IT_CALL, .as.tok = t};
                         arrput(ir, i);
                     } break;
                 }
@@ -418,7 +414,7 @@ Ins *gen_ir(const char *fp) {
                     default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or strings or < or > or }\n"); break;
 
                     case TT_STRING: {
-                        Ins i = {.type = IT_WRITE, .as.iden = t};
+                        Ins i = {.type = IT_WRITE, .as.tok = t};
                         arrput(ir, i);
                     } break;
 
@@ -431,13 +427,13 @@ Ins *gen_ir(const char *fp) {
                         if(arrlenu(ifstack) == 0) state = STATE_REGULAR;
                         else {
                             Ins i = arrlast(ifstack);
-                            ir[i.as.iff.jidx].as.iff.jidx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
+                            ir[i.as.iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
                             (void)arrpop(ifstack);
                         }
                     } break;
 
                     case TT_IDEN: {
-                        Ins i = {.type = IT_CALL, .as.iden = t};
+                        Ins i = {.type = IT_CALL, .as.tok = t};
                         arrput(ir, i);
                     } break;
 
@@ -447,13 +443,13 @@ Ins *gen_ir(const char *fp) {
                             lex_expect(&l, TT_OPENING);
                             Ins i = {.type = IT_IF, .as.iff = { .read = read }};
                             arrput(ir, i);
-                            Ins ifi = { .as.iff = { .jidx = arrlenu(ir) - 1 }};
+                            Ins ifi = { .as.iff = { .idx = arrlenu(ir) - 1 }};
                             arrput(ifstack, ifi);
                         } else if(slice_eq(t.slice, slice_create_raw(ELSE_WORD))) {
                             lex_expect(&l, TT_OPENING);
                             Ins i = {.type = IT_ELSE};
                             arrput(ir, i);
-                            Ins elsei = { .as.iff = { .jidx = arrlenu(ir) - 1 }};
+                            Ins elsei = { .as.iff = { .idx = arrlenu(ir) - 1 }};
                             arrput(ifstack, elsei);
                         } else if(slice_eq(t.slice, slice_create_raw(PRINT_WORD))) {
                             Ins i = {.type = IT_PRINT};
@@ -540,32 +536,32 @@ void run_ir(Ins *ir) {
             case IT_NOP: break;
             default: _unreachable(__LINE__); break;
 
-            case IT_ELSE: k = ins.as.iff.jidx - 1; break; // Jump to the previous idx. Then for loop adds 1.
+            case IT_ELSE: k = ins.as.iff.idx - 1; break; // Jump to the previous idx. Then for loop adds 1.
 
             case IT_IF: {
-                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.jidx - 1; // Jump to the previous idx. Then for loop adds 1.
+                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
             case IT_DECL_TM: {
                 unimplemented;
                 // union {Sh_tm* tm; Sh_ltm *ltm;} p = {0};
-                // Tok t = ins.as.iden;
+                // Tok t = ins.as.tok;
                 // slice_to_buf(t.slice, &tbuf);
-                // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.iden.loc.fp, p.tm->value.iden.loc.row, p.tm->value.iden.loc.col);
-                // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.iden.loc.fp, p.ltm->value.iden.loc.row, p.ltm->value.iden.loc.col);
+                // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.tok.loc.fp, p.tm->value.tok.loc.row, p.tm->value.tok.loc.col);
+                // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.tok.loc.fp, p.ltm->value.tok.loc.row, p.ltm->value.tok.loc.col);
                 // shput(idens, tbuf.buf, '\0');
-                // shput(tms, shlast(idens).key, (Tm){ .iden = t });
+                // shput(tms, shlast(idens).key, (Tm){ .tok = t });
             } break;
 
             case IT_DECL_LTM: {
                 unimplemented;
                 // union {Sh_tm* tm; Sh_ltm *ltm;} p = {0};
-                // Tok t = ins.as.iden;
+                // Tok t = ins.as.tok;
                 // slice_to_buf(t.slice, &tbuf);
-                // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.iden.loc.fp, p.tm->value.iden.loc.row, p.tm->value.iden.loc.col);
-                // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.iden.loc.fp, p.ltm->value.iden.loc.row, p.ltm->value.iden.loc.col);
+                // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.tok.loc.fp, p.tm->value.tok.loc.row, p.tm->value.tok.loc.col);
+                // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.tok.loc.fp, p.ltm->value.tok.loc.row, p.ltm->value.tok.loc.col);
                 // shput(idens, tbuf.buf, '\0');
-                // Ltm ltm = {.iden = t, .idens = NULL};
+                // Ltm ltm = {.tok = t, .idens = NULL};
                 // shput(ltms, shlast(idens).key, ltm);
             } break;
 
@@ -575,7 +571,7 @@ void run_ir(Ins *ir) {
                 // for(size_t i = 0; i < tm->rules.len; ++i) {
                 //     if(rule_beg_eq(tm->rules.data[i], ins.as.rule)) {
                 //         Tok prev = tm->rules.data[i].state;
-                //         tok_report(ins.as.iden, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
+                //         tok_report(ins.as.tok, "Redefinition of rule. Previous definition at %s:%lld:%lld\n", prev.loc.fp, prev.loc.row, prev.loc.col);
                 //     }
                 // }
                 // da_append(tm->rules, ins.as.rule);
@@ -583,8 +579,8 @@ void run_ir(Ins *ir) {
 
             case IT_FEED: {
                 tape_delete(&tape);
-                for(size_t i = 1; i < ins.as.iden.slice.len - 1; ++i) {
-                    tape_write_char(&tape, ins.as.iden.slice.data[i]);
+                for(size_t i = 1; i < ins.as.tok.slice.len - 1; ++i) {
+                    tape_write_char(&tape, ins.as.tok.slice.data[i]);
                     tape_move(&tape, DIR_RIGHT);
                 }
                 tape.head = 0;
@@ -593,7 +589,7 @@ void run_ir(Ins *ir) {
             case IT_CALL: {
                 unimplemented;
                 // void *p = NULL;
-                // slice_to_buf(ins.as.iden.slice, &tbuf);
+                // slice_to_buf(ins.as.tok.slice, &tbuf);
 
                 // if((p = shgetp_null(tms, tbuf.buf)) != NULL) {
                 //     tm_run(&((Sh_tm*)p)->value, &tape);
@@ -605,11 +601,11 @@ void run_ir(Ins *ir) {
                 //     break;
                 // }
 
-                // tok_report(ins.as.iden, "Undefined reference to tm / ltm\n");
+                // tok_report(ins.as.tok, "Undefined reference to tm / ltm\n");
             } break;
 
             // case IT_QCALL: {
-            //     Tok t = ins.as.iden;
+            //     Tok t = ins.as.tok;
             //     slice_to_buf(t.slice, &tbuf);
             //     if(shgetp_null(idens, tbuf.buf) == NULL)  tok_report(t, "Queuing a call to a undefined tm / ltm");
             //     Ltm *ltm = &shlast(ltms).value;
@@ -621,8 +617,8 @@ void run_ir(Ins *ir) {
             case IT_MOVE: tape_move(&tape, ins.as.dir); break;
 
             case IT_WRITE: {
-                for(size_t i = 1; i < ins.as.iden.slice.len - 1; ++i) {
-                    tape_write_char(&tape, ins.as.iden.slice.data[i]);
+                for(size_t i = 1; i < ins.as.tok.slice.len - 1; ++i) {
+                    tape_write_char(&tape, ins.as.tok.slice.data[i]);
                     tape_move(&tape, DIR_RIGHT);
                 }
             } break;
@@ -651,15 +647,15 @@ int main(void) {
             case IT_DECL_LTM:
             case IT_FEED:
             case IT_CALL:
-            case IT_DECL_TM: tok_print(ir[i].as.iden); break;
+            case IT_DECL_TM: tok_print(ir[i].as.tok); break;
             case IT_PUSH_RULE: {
                 Rule r = ir[i].as.rule;
                 rule_print(r);
             } break;
-            case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(ir[i].as.iff.read.slice), ir[i].as.iff.jidx); break;
-            case IT_ELSE: printf("Jump to: %lld\n", ir[i].as.iff.jidx); break;
+            case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(ir[i].as.iff.read.slice), ir[i].as.iff.idx); break;
+            case IT_ELSE: printf("Jump to: %lld\n", ir[i].as.iff.idx); break;
             case IT_PRINT: printf("\n"); break;
-            case IT_WRITE: tok_print(ir[i].as.iden); break;
+            case IT_WRITE: tok_print(ir[i].as.tok); break;
             case IT_MOVE: printf("%c\n", dir_to_char(ir[i].as.dir)); break;
             case IT_RETURN: printf("Return\n"); break;
             default: unhandled;
