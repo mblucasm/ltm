@@ -263,15 +263,16 @@ Tok lex_next(Lex *l) {
 typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_RETURN, IT_FEED, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
 
 typedef struct {
-    Tok read;
+    Tok tok;
     size_t idx;
-} If;
+} TokIdx;
 
 typedef union {
-    Rule rule;
     Tok tok;
+    Rule rule;
+    TokIdx iff;
+    TokIdx ltm;
     Dir dir;
-    If iff;
     size_t idx;
 } InsValue;
 
@@ -346,6 +347,10 @@ Ins *gen_ir(const char *fp) {
 
         t = lex_next(&l);
 
+        for(size_t _i = 0; _i < arrlenu(stack); ++_i) {
+            printf("--------> %s\n", instype_to_str(stack[_i].type));
+        }
+
         _STATIC_ASSERT(STATE_COUNT == 4);
         switch(state) {
 
@@ -361,7 +366,16 @@ Ins *gen_ir(const char *fp) {
                         if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context. Valid keywords are: %s and %s\n", TM_WORD, LTM_WORD);
                         Tok tok = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
-                        Ins i = {.type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM, .as.tok = tok};
+                        
+                        Ins i = { .type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM };
+                        if(i.type == IT_DECL_TM) i.as.tok = tok;
+                        else if(i.type == IT_DECL_LTM) {
+                            i.as.ltm.tok = tok;
+                            Ins ret = { .type = IT_RETURN, .as.idx = arrlenu(ir) };
+                            printf("PUTTING RETURN INTO STACK\n");
+                            arrput(stack, ret);
+                        } else unreachable;
+
                         arrput(ir, i);
                         state = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? STATE_DECL_TM : STATE_DECL_LTM;
                     } break;
@@ -403,6 +417,11 @@ Ins *gen_ir(const char *fp) {
                     case TT_CLOSING: {
                         Ins i = { .type = IT_RETURN };
                         arrput(ir, i);
+                        printf("POPPING RETURN FROM STACK\n");
+                        Ins ret = arrpop(stack);
+                        assert(ret.type == IT_RETURN);
+                        assert(ir[ret.as.idx].type == IT_DECL_LTM);
+                        ir[ret.as.idx].as.ltm.idx = arrlen(ir);
                         state = STATE_REGULAR;
                     } break;
 
@@ -431,9 +450,10 @@ Ins *gen_ir(const char *fp) {
                     case TT_CLOSING: {
                         if(arrlenu(stack) == 0) state = STATE_REGULAR;
                         else {
-                            If iff = arrlast(stack).as.iff;
+                            Ins ins = arrpop(stack); 
+                            assert(ins.type == IT_IF || ins.type == IT_ELSE);
+                            TokIdx iff = ins.as.iff;
                             ir[iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
-                            (void)arrpop(stack);
                         }
                     } break;
 
@@ -446,15 +466,15 @@ Ins *gen_ir(const char *fp) {
                         if(slice_eq(t.slice, slice_create_raw(IF_WORD))) {
                             Tok read = lex_expect(&l, TT_CHAR);
                             lex_expect(&l, TT_OPENING);
-                            Ins i = {.type = IT_IF, .as.iff = { .read = read }};
+                            Ins i = {.type = IT_IF, .as.iff = { .tok = read }};
                             arrput(ir, i);
-                            Ins ifi = { .as.iff = { .idx = arrlenu(ir) - 1 }};
+                            Ins ifi = { .type = IT_IF, .as.iff = { .idx = arrlenu(ir) - 1 }};
                             arrput(stack, ifi);
                         } else if(slice_eq(t.slice, slice_create_raw(ELSE_WORD))) {
                             lex_expect(&l, TT_OPENING);
                             Ins i = {.type = IT_ELSE};
                             arrput(ir, i);
-                            Ins elsei = { .as.iff = { .idx = arrlenu(ir) - 1 }};
+                            Ins elsei = { .type = IT_ELSE, .as.iff = { .idx = arrlenu(ir) - 1 }};
                             arrput(stack, elsei);
                         } else if(slice_eq(t.slice, slice_create_raw(PRINT_WORD))) {
                             Ins i = {.type = IT_PRINT};
@@ -544,7 +564,7 @@ void run_ir(Ins *ir) {
             case IT_ELSE: k = ins.as.iff.idx - 1; break; // Jump to the previous idx. Then for loop adds 1.
 
             case IT_IF: {
-                if(tape_read_char(tape) != ins.as.iff.read.slice.data[1]) k = ins.as.iff.idx - 1; // Jump to the previous idx. Then for loop adds 1.
+                if(tape_read_char(tape) != ins.as.iff.tok.slice.data[1]) k = ins.as.iff.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
             case IT_DECL_TM: {
@@ -646,23 +666,24 @@ int main(void) {
     printf("======================\n");
     printf("Printing IR\n");
     printf("======================\n");
-    for(size_t i = 0; i < arrlenu(ir); ++i) {
-        printf("%lld>> %s: ", i, instype_to_str(ir[i].type));
-        switch(ir[i].type) {
-            case IT_DECL_LTM:
-            case IT_FEED:
-            case IT_CALL:
-            case IT_DECL_TM: tok_print(ir[i].as.tok); break;
+    for(size_t k = 0; k < arrlenu(ir); ++k) {
+        Ins i = ir[k];
+        printf("%lld>> %s ", k, instype_to_str(i.type));
+        switch(i.type) {
+            case IT_DECL_LTM: printf(SLICE_FMT" and jump to %lld\n", SLICE_ARG(i.as.ltm.tok.slice), i.as.ltm.idx); break;
+            case IT_FEED: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
+            case IT_CALL: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
+            case IT_DECL_TM: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
             case IT_PUSH_RULE: {
-                Rule r = ir[i].as.rule;
+                Rule r = i.as.rule;
                 rule_print(r);
             } break;
-            case IT_IF: printf("Read: ."SLICE_FMT". Jump to: %lld\n", SLICE_ARG(ir[i].as.iff.read.slice), ir[i].as.iff.idx); break;
-            case IT_ELSE: printf("Jump to: %lld\n", ir[i].as.iff.idx); break;
+            case IT_IF: printf("not "SLICE_FMT" jump to %lld\n", SLICE_ARG(i.as.iff.tok.slice), i.as.iff.idx); break;
+            case IT_ELSE: printf("jump to %lld\n", i.as.iff.idx); break;
             case IT_PRINT: printf("\n"); break;
-            case IT_WRITE: tok_print(ir[i].as.tok); break;
-            case IT_MOVE: printf("%c\n", dir_to_char(ir[i].as.dir)); break;
-            case IT_RETURN: printf("Return\n"); break;
+            case IT_WRITE: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
+            case IT_MOVE: printf("%c\n", dir_to_char(i.as.dir)); break;
+            case IT_RETURN: printf("\n"); break;
             default: unhandled;
         }
     }
