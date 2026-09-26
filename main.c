@@ -262,12 +262,17 @@ Tok lex_next(Lex *l) {
 
 typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_RETURN, IT_FEED, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
 
+typedef struct {
+    Tok read;
+    size_t idx;
+} If;
+
 typedef union {
     Rule rule;
     Tok tok;
     Dir dir;
+    If iff;
     size_t idx;
-    struct {Tok read; size_t idx;} iff;
 } InsValue;
 
 typedef struct {
@@ -335,7 +340,7 @@ Ins *gen_ir(const char *fp) {
     State state = STATE_REGULAR;
 
     Ins *ir = NULL;
-    Ins *ifstack = NULL;
+    Ins *stack = NULL;
 
     while(t.type != TT_EOF) {
 
@@ -424,11 +429,11 @@ Ins *gen_ir(const char *fp) {
                     } break;
 
                     case TT_CLOSING: {
-                        if(arrlenu(ifstack) == 0) state = STATE_REGULAR;
+                        if(arrlenu(stack) == 0) state = STATE_REGULAR;
                         else {
-                            Ins i = arrlast(ifstack);
-                            ir[i.as.iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
-                            (void)arrpop(ifstack);
+                            If iff = arrlast(stack).as.iff;
+                            ir[iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
+                            (void)arrpop(stack);
                         }
                     } break;
 
@@ -444,13 +449,13 @@ Ins *gen_ir(const char *fp) {
                             Ins i = {.type = IT_IF, .as.iff = { .read = read }};
                             arrput(ir, i);
                             Ins ifi = { .as.iff = { .idx = arrlenu(ir) - 1 }};
-                            arrput(ifstack, ifi);
+                            arrput(stack, ifi);
                         } else if(slice_eq(t.slice, slice_create_raw(ELSE_WORD))) {
                             lex_expect(&l, TT_OPENING);
                             Ins i = {.type = IT_ELSE};
                             arrput(ir, i);
                             Ins elsei = { .as.iff = { .idx = arrlenu(ir) - 1 }};
-                            arrput(ifstack, elsei);
+                            arrput(stack, elsei);
                         } else if(slice_eq(t.slice, slice_create_raw(PRINT_WORD))) {
                             Ins i = {.type = IT_PRINT};
                             arrput(ir, i);
@@ -461,7 +466,7 @@ Ins *gen_ir(const char *fp) {
         }
     }
 
-    arrfree(ifstack);
+    arrfree(stack);
     return ir;
 }
 
