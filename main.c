@@ -347,10 +347,6 @@ Ins *gen_ir(const char *fp) {
 
         t = lex_next(&l);
 
-        for(size_t _i = 0; _i < arrlenu(stack); ++_i) {
-            printf("--------> %s\n", instype_to_str(stack[_i].type));
-        }
-
         _STATIC_ASSERT(STATE_COUNT == 4);
         switch(state) {
 
@@ -372,7 +368,6 @@ Ins *gen_ir(const char *fp) {
                         else if(i.type == IT_DECL_LTM) {
                             i.as.ltm.tok = tok;
                             Ins ret = { .type = IT_RETURN, .as.idx = arrlenu(ir) };
-                            printf("PUTTING RETURN INTO STACK\n");
                             arrput(stack, ret);
                         } else unreachable;
 
@@ -417,7 +412,6 @@ Ins *gen_ir(const char *fp) {
                     case TT_CLOSING: {
                         Ins i = { .type = IT_RETURN };
                         arrput(ir, i);
-                        printf("POPPING RETURN FROM STACK\n");
                         Ins ret = arrpop(stack);
                         assert(ret.type == IT_RETURN);
                         assert(ir[ret.as.idx].type == IT_DECL_LTM);
