@@ -40,25 +40,6 @@ void _unimplemented(size_t line) {
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
 
-typedef struct {
-    char *key;
-    char value;
-} SH;
-
-SH *kwords = NULL;
-SH *idens = NULL;
-
-bool is_keyword(const char *s) {
-    return (shgetp_null(kwords, s) != NULL);
-}
-
-typedef struct {
-    const char *fp;
-    const char *current;
-    const char *row_start;
-    size_t row;
-} Lex;
-
 typedef enum {
     TT_UNKNOWN,
     TT_EOF,
@@ -85,6 +66,29 @@ typedef struct {
     Slice slice;
     Loc loc;
 } Tok;
+
+typedef struct {
+    Tok tok;
+    size_t idx;
+} TokIdx;
+
+typedef struct {
+    char *key;
+    TokIdx value;
+} SH;
+
+SH *kwords = NULL;
+
+bool is_keyword(const char *s) {
+    return (shgetp_null(kwords, s) != NULL);
+}
+
+typedef struct {
+    const char *fp;
+    const char *current;
+    const char *row_start;
+    size_t row;
+} Lex;
 
 typedef struct {
     Tok state;
@@ -261,11 +265,6 @@ Tok lex_next(Lex *l) {
 }
 
 typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_RETURN, IT_FEED, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
-
-typedef struct {
-    Tok tok;
-    size_t idx;
-} TokIdx;
 
 typedef union {
     Tok tok;
@@ -543,17 +542,28 @@ bool rule_eq(Rule a, Rule b) {
     } \
     printf("--------------------\n");
 
+void todo(const char *msg, ...) {
+    va_list va;
+    va_start(va, msg);
+    fprintf(stderr, "TODO: ");
+    vfprintf(stderr, msg, va);
+    va_end(va);
+}
+
 void run_ir(Ins *ir) {
 
     Tape tape = {0};
     size_t len = arrlenu(ir);
+
+    SH *idens = NULL;
+    sh_new_arena(idens);
 
     for(size_t k = 0; k < len; ++k) {
         Ins ins = ir[k];
         switch(ins.type) {
 
             case IT_NOP: break;
-            default: _unreachable(__LINE__); break;
+            default: printf("%d\n", ins.type); unreachable; break;
 
             case IT_ELSE: k = ins.as.iff.idx - 1; break; // Jump to the previous idx. Then for loop adds 1.
 
@@ -572,16 +582,21 @@ void run_ir(Ins *ir) {
                 // shput(tms, shlast(idens).key, (Tm){ .tok = t });
             } break;
 
-            case IT_DECL_LTM: {
+            case IT_RETURN: {
                 unimplemented;
-                // union {Sh_tm* tm; Sh_ltm *ltm;} p = {0};
-                // Tok t = ins.as.tok;
-                // slice_to_buf(t.slice, &tbuf);
-                // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.tok.loc.fp, p.tm->value.tok.loc.row, p.tm->value.tok.loc.col);
-                // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.tok.loc.fp, p.ltm->value.tok.loc.row, p.ltm->value.tok.loc.col);
-                // shput(idens, tbuf.buf, '\0');
-                // Ltm ltm = {.tok = t, .idens = NULL};
-                // shput(ltms, shlast(idens).key, ltm);
+            } break;
+
+            case IT_DECL_LTM: {
+                // Upon reaching a LTM declaration skip all instructions until return.
+                // Should add some way to check for undefined calls inside the ltm body.
+                Tok t = ins.as.ltm.tok;
+                slice_to_buf(t.slice, &tbuf);
+                int i;
+                todo("Check if this iden refers to a tm\n");
+                if((i = shgeti(idens, tbuf.buf)) != -1) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", idens[i].value.tok.loc.fp, idens[i].value.tok.loc.row, idens[i].value.tok.loc.col);
+                TokIdx ti = { .tok = t, .idx = k };
+                shput(idens, tbuf.buf, ti);
+                k = ins.as.ltm.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
             case IT_PUSH_RULE: {
@@ -623,14 +638,6 @@ void run_ir(Ins *ir) {
                 // tok_report(ins.as.tok, "Undefined reference to tm / ltm\n");
             } break;
 
-            // case IT_QCALL: {
-            //     Tok t = ins.as.tok;
-            //     slice_to_buf(t.slice, &tbuf);
-            //     if(shgetp_null(idens, tbuf.buf) == NULL)  tok_report(t, "Queuing a call to a undefined tm / ltm");
-            //     Ltm *ltm = &shlast(ltms).value;
-            //     arrput(ltm->idens, shgets(idens, tbuf.buf).key);
-            // } break;
-
             case IT_PRINT: tape_print(tape); break;
 
             case IT_MOVE: tape_move(&tape, ins.as.dir); break;
@@ -643,17 +650,17 @@ void run_ir(Ins *ir) {
             } break;
         }
     }
+
+    shfree(idens);
 }
 
 int main(void) {
 
-    sh_new_arena(idens);
-
-    shput(kwords, TM_WORD, '\0');
-    shput(kwords, LTM_WORD, '\0');
-    shput(kwords, IF_WORD, '\0');
-    shput(kwords, ELSE_WORD, '\0');
-    shput(kwords, PRINT_WORD, '\0');
+    shput(kwords, TM_WORD, (TokIdx){0});
+    shput(kwords, LTM_WORD, (TokIdx){0});
+    shput(kwords, IF_WORD, (TokIdx){0});
+    shput(kwords, ELSE_WORD, (TokIdx){0});
+    shput(kwords, PRINT_WORD, (TokIdx){0});
 
     Ins *ir = gen_ir("z.ltm");
 
