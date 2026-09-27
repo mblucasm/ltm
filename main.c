@@ -74,7 +74,7 @@ typedef struct {
 
 typedef struct {
     char *key;
-    TokIdx value;
+    Tok value;
 } Sh;
 
 Sh *kwords = NULL;
@@ -590,9 +590,8 @@ void run_ir(Ins *ir) {
                 int i;
                 slice_to_buf(ins.as.ltm.tok.slice, &tbuf);
                 todo("Check if this iden refers to a tm\n");
-                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.tok.loc.fp, ltms[i].value.tok.loc.row, ltms[i].value.tok.loc.col);
-                TokIdx ti = { .tok = ins.as.ltm.tok, .idx = k };
-                shput(ltms, tbuf.buf, ti);
+                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.loc.fp, ltms[i].value.loc.row, ltms[i].value.loc.col);
+                shput(ltms, tbuf.buf, ins.as.ltm.tok);
                 k = ins.as.ltm.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
@@ -655,11 +654,11 @@ int main(int argc, char **argv) {
 
     if(argc != 2) unhandled;
 
-    shput(kwords, TM_WORD, (TokIdx){0});
-    shput(kwords, LTM_WORD, (TokIdx){0});
-    shput(kwords, IF_WORD, (TokIdx){0});
-    shput(kwords, ELSE_WORD, (TokIdx){0});
-    shput(kwords, PRINT_WORD, (TokIdx){0});
+    shput(kwords, TM_WORD, (Tok){0});
+    shput(kwords, LTM_WORD, (Tok){0});
+    shput(kwords, IF_WORD, (Tok){0});
+    shput(kwords, ELSE_WORD, (Tok){0});
+    shput(kwords, PRINT_WORD, (Tok){0});
 
     Ins *ir = gen_ir(argv[1]);
 
