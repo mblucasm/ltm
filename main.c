@@ -299,7 +299,7 @@ const char *instype_to_str(InsType type) {
     }
 }
 
-typedef enum {STATE_REGULAR, STATE_DECL_TM, STATE_DECL_LTM, STATE_DECL_BLOCK, STATE_COUNT} State;
+typedef enum {STATE_REGULAR, STATE_DECL_TM, STATE_DECL_LTM, STATE_COUNT} State;
 
 Dir dir_from_char(char c) {
     switch(c) {
@@ -346,7 +346,7 @@ Ins *gen_ir(const char *fp) {
 
         t = lex_next(&l);
 
-        _STATIC_ASSERT(STATE_COUNT == 4);
+        _STATIC_ASSERT(STATE_COUNT == 3);
         switch(state) {
 
             default: _unreachable(__LINE__); break;
@@ -379,7 +379,7 @@ Ins *gen_ir(const char *fp) {
                         lex_expect(&l, TT_OPENING);
                         Ins i = {.type = IT_FEED, .as.tok = t};
                         arrput(ir, i);
-                        state = STATE_DECL_BLOCK;
+                        state = STATE_DECL_LTM;
                     } break;
                 }
             } break;
@@ -406,28 +406,6 @@ Ins *gen_ir(const char *fp) {
             case STATE_DECL_LTM: {
                 switch(t.type) {
 
-                    default: tok_report(t, "Invalid token. Expected tokens are: identifier or }\n"); break;
-
-                    case TT_CLOSING: {
-                        Ins i = { .type = IT_RETURN };
-                        arrput(ir, i);
-                        Ins ret = arrpop(stack);
-                        assert(ret.type == IT_RETURN);
-                        assert(ir[ret.as.idx].type == IT_DECL_LTM);
-                        ir[ret.as.idx].as.ltm.idx = arrlen(ir);
-                        state = STATE_REGULAR;
-                    } break;
-
-                    case TT_IDEN: {
-                        Ins i = {.type = IT_CALL, .as.tok = t};
-                        arrput(ir, i);
-                    } break;
-                }
-            } break;
-
-            case STATE_DECL_BLOCK: {
-                switch(t.type) {
-
                     default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or strings or < or > or }\n"); break;
 
                     case TT_STRING: {
@@ -443,10 +421,17 @@ Ins *gen_ir(const char *fp) {
                     case TT_CLOSING: {
                         if(arrlenu(stack) == 0) state = STATE_REGULAR;
                         else {
-                            Ins ins = arrpop(stack); 
-                            assert(ins.type == IT_IF || ins.type == IT_ELSE);
-                            TokIdx iff = ins.as.iff;
-                            ir[iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
+                            Ins ins = arrpop(stack);
+                            if(ins.type == IT_IF || ins.type == IT_ELSE) {
+                                TokIdx iff = ins.as.iff;
+                                ir[iff.idx].as.iff.idx = arrlenu(ir) + (size_t)slice_eq(lex_peek(&l).slice, slice_create_raw(ELSE_WORD));
+                            } else if(ins.type == IT_RETURN) {
+                                Ins i = { .type = IT_RETURN };
+                                arrput(ir, i);
+                                assert(ir[ins.as.idx].type == IT_DECL_LTM);
+                                ir[ins.as.idx].as.ltm.idx = arrlen(ir);
+                                state = STATE_REGULAR;            
+                            } else unreachable;
                         }
                     } break;
 
