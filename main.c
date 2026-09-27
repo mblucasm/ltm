@@ -127,8 +127,8 @@ const char *tok_type_to_str(TokType type) {
 
 void tok_print(Tok t) {
     printf(
-        "z.ltm:%lld:%lld %s %lld "SLICE_FMT"\n",
-        t.loc.row, t.loc.col,
+        "%s:%lld:%lld %s %lld "SLICE_FMT"\n",
+        t.loc.fp, t.loc.row, t.loc.col,
         tok_type_to_str(t.type), t.slice.len,
         SLICE_ARG(t.slice)
     );
@@ -639,7 +639,9 @@ void run_ir(Ins *ir) {
     shfree(idens);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+
+    if(argc != 2) unhandled;
 
     shput(kwords, TM_WORD, (TokIdx){0});
     shput(kwords, LTM_WORD, (TokIdx){0});
@@ -647,7 +649,7 @@ int main(void) {
     shput(kwords, ELSE_WORD, (TokIdx){0});
     shput(kwords, PRINT_WORD, (TokIdx){0});
 
-    Ins *ir = gen_ir("z.ltm");
+    Ins *ir = gen_ir(argv[1]);
 
     printf("======================\n");
     printf("Printing IR\n");
