@@ -588,7 +588,7 @@ void run_ir(Ins *ir) {
 
             case IT_DECL_LTM: {
                 // Upon reaching a LTM declaration skip all instructions until return.
-                // Should add some way to check for undefined calls inside the ltm body.
+                // TODO: check for undefined calls inside the ltm body.
                 Tok t = ins.as.ltm.tok;
                 slice_to_buf(t.slice, &tbuf);
                 int i;
