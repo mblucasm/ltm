@@ -75,9 +75,9 @@ typedef struct {
 typedef struct {
     char *key;
     TokIdx value;
-} SH;
+} Sh;
 
-SH *kwords = NULL;
+Sh *kwords = NULL;
 
 bool is_keyword(const char *s) {
     return (shgetp_null(kwords, s) != NULL);
@@ -492,12 +492,12 @@ Ins *gen_ir(const char *fp) {
 // }
 
 // void ltm_run(Ltm *ltm, Tape *tape) {
-//     size_t len = arrlenu(ltm->idens);
+//     size_t len = arrlenu(ltm->ltms);
 //     printf("Running ltm for %lld macs\n", len);
 //     for(size_t i = 0; i < len; ++i) {
 //         void *p = NULL;
-//         if((p = shgetp_null(tms, ltm->idens[i])) != NULL) tm_run(&((Sh_tm*)p)->value, tape);
-//         else if((p = shgetp_null(ltms, ltm->idens[i])) != NULL) ltm_run(&((Sh_ltm*)p)->value, tape);
+//         if((p = shgetp_null(tms, ltm->ltms[i])) != NULL) tm_run(&((Sh_tm*)p)->value, tape);
+//         else if((p = shgetp_null(ltms, ltm->ltms[i])) != NULL) ltm_run(&((Sh_ltm*)p)->value, tape);
 //         else unreachable;
 //     }
 // }
@@ -535,13 +535,26 @@ void todo(const char *msg, ...) {
     va_end(va);
 }
 
+typedef struct {
+    char *key;
+    struct { char write; Dir dir; Slice next; } value;
+} Tm;
+
+typedef struct {
+    char *key;
+    Tm *value;
+} ShTm;
+
 void run_ir(Ins *ir) {
 
     Tape tape = {0};
     size_t len = arrlenu(ir);
 
-    SH *idens = NULL;
-    sh_new_arena(idens);
+    Sh *ltms = NULL;
+    ShTm *tms = NULL;
+
+    sh_new_arena(ltms);
+    sh_new_arena(tms);
 
     for(size_t k = 0; k < len; ++k) {
         Ins ins = ir[k];
@@ -563,8 +576,8 @@ void run_ir(Ins *ir) {
                 // slice_to_buf(t.slice, &tbuf);
                 // if((p.tm = shgetp_null(tms, tbuf.buf)) != NULL)  tok_report(t, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", p.tm->value.tok.loc.fp, p.tm->value.tok.loc.row, p.tm->value.tok.loc.col);
                 // if((p.ltm = shgetp_null(ltms, tbuf.buf)) != NULL) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", p.ltm->value.tok.loc.fp, p.ltm->value.tok.loc.row, p.ltm->value.tok.loc.col);
-                // shput(idens, tbuf.buf, '\0');
-                // shput(tms, shlast(idens).key, (Tm){ .tok = t });
+                // shput(ltms, tbuf.buf, '\0');
+                // shput(tms, shlast(ltms).key, (Tm){ .tok = t });
             } break;
 
             case IT_RETURN: {
@@ -574,13 +587,12 @@ void run_ir(Ins *ir) {
             case IT_DECL_LTM: {
                 // Upon reaching a LTM declaration skip all instructions until return.
                 // TODO: check for undefined calls inside the ltm body.
-                Tok t = ins.as.ltm.tok;
-                slice_to_buf(t.slice, &tbuf);
                 int i;
+                slice_to_buf(ins.as.ltm.tok.slice, &tbuf);
                 todo("Check if this iden refers to a tm\n");
-                if((i = shgeti(idens, tbuf.buf)) != -1) tok_report(t, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", idens[i].value.tok.loc.fp, idens[i].value.tok.loc.row, idens[i].value.tok.loc.col);
-                TokIdx ti = { .tok = t, .idx = k };
-                shput(idens, tbuf.buf, ti);
+                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.tok.loc.fp, ltms[i].value.tok.loc.row, ltms[i].value.tok.loc.col);
+                TokIdx ti = { .tok = ins.as.ltm.tok, .idx = k };
+                shput(ltms, tbuf.buf, ti);
                 k = ins.as.ltm.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
@@ -636,7 +648,7 @@ void run_ir(Ins *ir) {
         }
     }
 
-    shfree(idens);
+    shfree(ltms);
 }
 
 int main(int argc, char **argv) {
