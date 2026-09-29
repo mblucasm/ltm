@@ -20,7 +20,7 @@ Slice slice_create(const char *data, size_t len) {
 }
 
 Slice slice_slice(Slice *s, char delim) {
-    
+
     size_t i = 0;
     while(i < s->len && s->data[i] != delim) ++i;
 
@@ -36,9 +36,11 @@ Slice slice_from_file(const char *fp) {
 
     FILE *f = fopen(fp, "rb");
     fseek(f, 0, SEEK_END);
-    size_t len = ftell(f);
+    long len = ftell(f);
+    if(len == -1) return (Slice){0};
+
     rewind(f);
-    
+
     char *data = malloc(sizeof(char) * (len + 1));
     fread(data, sizeof(char), len, f);
     data[len] = '\0';

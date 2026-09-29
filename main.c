@@ -19,6 +19,7 @@
 #define IF_WORD  "if"
 #define ELSE_WORD "else"
 #define PRINT_WORD "print"
+#define REPEAT_WORD "repeat"
 
 Buf tbuf = {0};
 
@@ -52,6 +53,7 @@ typedef enum {
     TT_STRING,
     TT_ARROW,
     TT_STAR,
+    TT_LABEL,
     TT_COUNT,
 } TokType;
 
@@ -73,8 +75,31 @@ typedef struct {
 } TokIdx;
 
 typedef struct {
+    Tok tok;
+    Slice write;
+    Dir dir;
+    Slice next;
+} TmMap;
+
+typedef struct {
+    char *key; // Concatenation of current state + read (where read == '\0' if *).
+    TmMap value;
+} ShTmMap;
+
+typedef struct {
+    Tok tok;
+    Slice init; // Initial state for the tm.
+    ShTmMap *map;
+} Tm;
+
+typedef union {
+    TokIdx ti;
+    Tm tm;
+} ShValue;
+
+typedef struct {
     char *key;
-    TokIdx value;
+    ShValue value;
 } Sh;
 
 Sh *kwords = NULL;
@@ -107,7 +132,7 @@ Lex lex_create(const char *fp, const char *data) {
     };
 }
 
-_STATIC_ASSERT(TT_COUNT == 11);
+_STATIC_ASSERT(TT_COUNT == 12);
 const char *tok_type_to_str(TokType type) {
     switch(type) {
         case TT_UNKNOWN: return "Unknown";
@@ -121,6 +146,7 @@ const char *tok_type_to_str(TokType type) {
         case TT_STRING: return "String";
         case TT_ARROW: return "Arrow";
         case TT_STAR: return "Star";
+        case TT_LABEL: return "Label";
         default: exit(1);
     }
 }
@@ -212,6 +238,10 @@ int iscomment(int c) {
     return c != '\0' && c != '\n';
 }
 
+int isalnumcolon(int c) {
+    return isalnum(c) || c == ':';
+}
+
 Tok lex_peek(Lex *l) {
 
     redo: {
@@ -228,8 +258,9 @@ Tok lex_peek(Lex *l) {
     const char *row_start = l->row_start;
 
     if(isalpha(*start)) {
-        Slice raw = tok_parse(start, isalnum);
+        Slice raw = tok_parse(start, isalnumcolon);
         slice_to_buf(raw, &tbuf);
+        if(raw.data[raw.len - 1] == ':') return tok_create(TT_LABEL, raw, PEEK_LOCATION);
         return tok_create(is_keyword(tbuf.buf) ? TT_KEYWORD : TT_IDEN, raw, PEEK_LOCATION);
     } else if(*start == '"') {
         Slice raw = stringParse(start);
@@ -264,7 +295,23 @@ Tok lex_next(Lex *l) {
     return t;
 }
 
-typedef enum {IT_NOP, IT_DECL_TM, IT_PUSH_RULE, IT_DECL_LTM, IT_RETURN, IT_FEED, IT_MOVE, IT_WRITE, IT_CALL, IT_IF, IT_ELSE, IT_PRINT, IT_COUNT} InsType;
+typedef enum {
+    IT_NOP,
+    IT_DECL_TM,
+    IT_PUSH_RULE,
+    IT_DECL_LTM,
+    IT_RETURN,
+    IT_FEED,
+    IT_MOVE,
+    IT_WRITE,
+    IT_CALL,
+    IT_IF,
+    IT_ELSE,
+    IT_PRINT,
+    IT_PUSH_LABEL,
+    IT_REPEAT,
+    IT_COUNT
+} InsType;
 
 typedef union {
     Tok tok;
@@ -280,7 +327,7 @@ typedef struct {
     InsValue as;
 } Ins;
 
-_STATIC_ASSERT(IT_COUNT == 12);
+_STATIC_ASSERT(IT_COUNT == 14);
 const char *instype_to_str(InsType type) {
     switch(type) {
         case IT_NOP: return "No op";
@@ -295,6 +342,8 @@ const char *instype_to_str(InsType type) {
         case IT_RETURN: return "Return";
         case IT_WRITE: return "Write";
         case IT_MOVE: return "Move";
+        case IT_PUSH_LABEL: return "Push label";
+        case IT_REPEAT: return "Repeat";
         default: exit(1);
     }
 }
@@ -334,6 +383,8 @@ Tok lex_expect(Lex *l, TokType type) {
 Ins *gen_ir(const char *fp) {
 
     Slice s = slice_from_file(fp);
+    if(s.data == NULL) return NULL;
+
     Lex l = lex_create(fp, s.data);
 
     Tok t = {0};
@@ -361,7 +412,7 @@ Ins *gen_ir(const char *fp) {
                         if(!slice_eq(t.slice, slice_create_raw(TM_WORD)) && !slice_eq(t.slice, slice_create_raw(LTM_WORD))) tok_report(t, "Invalid keyword for this context. Valid keywords are: %s and %s\n", TM_WORD, LTM_WORD);
                         Tok tok = lex_expect(&l, TT_IDEN);
                         lex_expect(&l, TT_OPENING);
-                        
+
                         Ins i = { .type = slice_eq(t.slice, slice_create_raw(TM_WORD)) ? IT_DECL_TM : IT_DECL_LTM };
                         if(i.type == IT_DECL_TM) i.as.tok = tok;
                         else if(i.type == IT_DECL_LTM) {
@@ -407,6 +458,12 @@ Ins *gen_ir(const char *fp) {
 
                     default: tok_report(t, "Invalid token. Expected tokens are: identifier or if statements or strings or < or > or }\n"); break;
 
+                    case TT_LABEL: {
+                        --t.slice.len; // Get rid of the trailing ':'
+                        Ins i = { .type = IT_PUSH_LABEL, .as.tok = t };
+                        arrput(ir, i);
+                    } break;
+
                     case TT_STRING: {
                         Ins i = {.type = IT_WRITE, .as.tok = t};
                         arrput(ir, i);
@@ -429,7 +486,7 @@ Ins *gen_ir(const char *fp) {
                                 arrput(ir, i);
                                 assert(ir[ins.as.idx].type == IT_DECL_LTM);
                                 ir[ins.as.idx].as.ltm.idx = arrlen(ir);
-                                state = STATE_REGULAR;            
+                                state = STATE_REGULAR;
                             } else unreachable;
                         }
                     } break;
@@ -456,7 +513,11 @@ Ins *gen_ir(const char *fp) {
                         } else if(slice_eq(t.slice, slice_create_raw(PRINT_WORD))) {
                             Ins i = {.type = IT_PRINT};
                             arrput(ir, i);
-                        } else tok_report(t, "Invalid token. if, else and print are the only valid keywords inside blocks\n");
+                        } else if(slice_eq(t.slice, slice_create_raw(REPEAT_WORD))) {
+                            Tok label = lex_expect(&l, TT_IDEN);
+                            Ins i = { .type = IT_REPEAT, .as.tok = label };
+                            arrput(ir, i);
+                        }else tok_report(t, "Invalid token. if, else, repeat and print are the only valid keywords inside blocks\n");
                     } break;
                 }
             } break;
@@ -467,40 +528,17 @@ Ins *gen_ir(const char *fp) {
     return ir;
 }
 
-typedef struct {
-    Tok tok;
-    Slice write;
-    Dir dir;
-    Slice next;
-} TmMap;
-
-typedef struct {
-    char *key; // Concatenation of current state + read (where read == '\0' if *).
-    TmMap value;
-} ShTmMap;
-
-typedef struct {
-    Tok tok;
-    Slice init; // Initial state for the tm.
-    ShTmMap *map;
-} Tm;
-
-typedef struct {
-    char *key;
-    Tm value;
-} ShTm;
-
 // TODO: Refactor
 void tm_run(Tm tm, Tape *tape) {
-    
+
     if(shlenu(tm.map) == 0) return;
-    
+
     slice_to_buf(tm.init, &tbuf);
     ShTmMap *wc_map = shgetp_null(tm.map, tbuf.buf); // Potental match to rule with * wildcard.
     buf_write_char(&tbuf, tm.init.len + 0, tape_read_char(*tape));
     buf_write_char(&tbuf, tm.init.len + 1, '\0');
     ShTmMap *map = shgetp_null(tm.map, tbuf.buf); // Potential match to rule without wildcard.
-    
+
     map = map ? map : wc_map;
     while(map != NULL) {
         if(map->value.write.len != 1) tape_write_char(tape, map->value.write.data[1]);
@@ -547,6 +585,14 @@ void todo(const char *msg, ...) {
     va_end(va);
 }
 
+bool loc_eq(Loc a, Loc b) {
+    return
+        a.fp  == b.fp  &&
+        a.row == b.row &&
+        a.col == b.col
+    ;
+}
+
 void run_ir(Ins *ir) {
 
     Tape tape = {0};
@@ -554,8 +600,20 @@ void run_ir(Ins *ir) {
 
     Ins *stack = NULL;
     Sh *ltms = NULL;
-    ShTm *tms = NULL;
+    Sh *tms = NULL;
+    Sh *labels = NULL;
 
+    // Upon calling a ltm (or feeding some string to an unnamed one)
+    // push the instruction index to the stack.
+    // If the repeat label tries to jump to a label defined before
+    // the current top of the stack idx throw an error.
+    // Error out because jump is trying to be made between two
+    // different ltms.
+    // Pop the stack after the ltm call (can't do this with the
+    // unnamed ltms so stack isn't empty at the end of execution).
+    size_t *stack_current_ltm_idx = NULL;
+
+    sh_new_arena(labels);
     sh_new_arena(ltms);
     sh_new_arena(tms);
 
@@ -572,18 +630,40 @@ void run_ir(Ins *ir) {
                 if(tape_read_char(tape) != ins.as.iff.tok.slice.data[1]) k = ins.as.iff.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
+            case IT_PUSH_LABEL: {
+                slice_to_buf(ins.as.tok.slice, &tbuf);
+                ptrdiff_t i = shgeti(labels, tbuf.buf);
+                if(i != -1 && !loc_eq(ins.as.tok.loc, labels[i].value.ti.tok.loc)) tok_report(ins.as.tok, "Redefinition of label. Previous definition at %s:%lld:%lld\n", labels[i].value.ti.tok.loc.fp, labels[i].value.ti.tok.loc.row, labels[i].value.ti.tok.loc.col);
+                if(!loc_eq(ins.as.tok.loc, labels[i].value.ti.tok.loc)) {
+                    ShValue v = {.ti = {.tok = ins.as.tok, .idx = k }};
+                    shput(labels, tbuf.buf, v);
+                }
+            } break;
+
+            case IT_REPEAT: {
+                slice_to_buf(ins.as.tok.slice, &tbuf);
+                ptrdiff_t i = shgeti(labels, tbuf.buf);
+                if(i == -1) tok_report(ins.as.tok, "Undefined reference to label\n");
+                assert(arrlenu(stack_current_ltm_idx) > 0);
+                size_t ltm_decl_idx = arrlast(stack_current_ltm_idx);
+                if(labels[i].value.ti.idx < ltm_decl_idx) tok_report(ins.as.tok, "Can't jump between two different ltms\n");
+                k = labels[i].value.ti.idx; // Loop adds 1 and skips the push label instruction.
+            } break;
+
             case IT_DECL_TM: {
                 int i;
                 slice_to_buf(ins.as.tok.slice, &tbuf);
-                if((i = shgeti(tms, tbuf.buf)) != -1)  tok_report(ins.as.tok, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", tms[i].value.tok.loc.fp, tms[i].value.tok.loc.row, tms[i].value.tok.loc.col);
-                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.tok.loc.fp, ltms[i].value.tok.loc.row, ltms[i].value.tok.loc.col);
-                Tm tm = { .tok = ins.as.tok, .map = NULL };
-                sh_new_arena(tm.map);
-                shput(tms, tbuf.buf, tm);
+                if((i = shgeti(tms, tbuf.buf)) != -1)  tok_report(ins.as.tok, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", tms[i].value.tm.tok.loc.fp, tms[i].value.tm.tok.loc.row, tms[i].value.tm.tok.loc.col);
+                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.ti.tok.loc.fp, ltms[i].value.ti.tok.loc.row, ltms[i].value.ti.tok.loc.col);
+                ShValue v = { .tm = { .tok = ins.as.tok, .map = NULL }};
+                sh_new_arena(v.tm.map);
+                shput(tms, tbuf.buf, v);
             } break;
 
             case IT_RETURN: {
                 assert(arrlenu(stack) > 0);
+                assert(arrlenu(stack_current_ltm_idx) > 0);
+                (void)arrpop(stack_current_ltm_idx);
                 Ins ret = arrpop(stack);
                 assert(ret.type == IT_RETURN);
                 k = ret.as.idx;
@@ -594,22 +674,22 @@ void run_ir(Ins *ir) {
                 // TODO: check for undefined calls inside the ltm body.
                 int i;
                 slice_to_buf(ins.as.ltm.tok.slice, &tbuf);
-                if((i = shgeti(tms, tbuf.buf)) != -1)  tok_report(ins.as.tok, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", tms[i].value.tok.loc.fp, tms[i].value.tok.loc.row, tms[i].value.tok.loc.col);
-                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.tok.loc.fp, ltms[i].value.tok.loc.row, ltms[i].value.tok.loc.col);
-                TokIdx ti = { .tok = ins.as.ltm.tok, .idx = k };
-                shput(ltms, tbuf.buf, ti);
+                if((i = shgeti(tms, tbuf.buf)) != -1)  tok_report(ins.as.tok, "Redefinition of tm. Previous definition at %s:%lld:%lld\n", tms[i].value.tm.tok.loc.fp, tms[i].value.tm.tok.loc.row, tms[i].value.tm.tok.loc.col);
+                if((i = shgeti(ltms, tbuf.buf)) != -1) tok_report(ins.as.ltm.tok, "Redefinition of ltm. Previous definition at %s:%lld:%lld\n", ltms[i].value.ti.tok.loc.fp, ltms[i].value.ti.tok.loc.row, ltms[i].value.ti.tok.loc.col);
+                ShValue v = { .ti = { .tok = ins.as.ltm.tok, .idx = k }};
+                shput(ltms, tbuf.buf, v);
                 k = ins.as.ltm.idx - 1; // Jump to the previous idx. Then for loop adds 1.
             } break;
 
             case IT_PUSH_RULE: {
-                Tm *tm = &shlast(tms).value;
+                Tm *tm = &shlast(tms).value.tm;
                 Rule r = ins.as.rule;
                 slice_to_buf(r.state.slice, &tbuf);
                 if(r.read.slice.len > 1) {
                     buf_write_char(&tbuf, r.state.slice.len + 0, r.read.slice.data[1]);
                     buf_write_char(&tbuf, r.state.slice.len + 1, '\0');
                 }
-                
+
                 if(shlenu(tm->map) == 0) tm->init = r.state.slice;
 
                 ShTmMap *p = shgetp_null(tm->map, tbuf.buf);
@@ -620,6 +700,7 @@ void run_ir(Ins *ir) {
             } break;
 
             case IT_FEED: {
+                arrput(stack_current_ltm_idx, k);
                 tape_delete(&tape);
                 for(size_t i = 1; i < ins.as.tok.slice.len - 1; ++i) {
                     tape_write_char(&tape, ins.as.tok.slice.data[i]);
@@ -633,14 +714,15 @@ void run_ir(Ins *ir) {
                 slice_to_buf(ins.as.tok.slice, &tbuf);
 
                 if((i = shgeti(tms, tbuf.buf)) != -1) {
-                    tm_run(tms[i].value, &tape);
+                    tm_run(tms[i].value.tm, &tape);
                     break;
                 }
 
                 if((i = shgeti(ltms, tbuf.buf)) != -1) {
                     Ins ret = { .type = IT_RETURN, .as.idx = k }; // Save the current instruction idx
                     arrput(stack, ret);
-                    k = ltms[i].value.idx; // Idx of IT_DECL_TM (loop adds 1 so IT_DECL_TM is skipped)
+                    k = ltms[i].value.ti.idx; // Idx of IT_DECL_TM (loop adds 1 so IT_DECL_TM is skipped)
+                    arrput(stack_current_ltm_idx, ltms[i].value.ti.idx); // Push the destination idx here and pop it in RETURN
                     break;
                 }
 
@@ -660,21 +742,24 @@ void run_ir(Ins *ir) {
         }
     }
 
-    for(size_t i = 0; i < shlenu(tms); ++i) shfree(tms[i].value.map);
+    for(size_t i = 0; i < shlenu(tms); ++i) shfree(tms[i].value.tm.map);
     shfree(tms);
     shfree(ltms);
+    shfree(labels);
     arrfree(stack);
+    arrfree(stack_current_ltm_idx);
 }
 
 int main(int argc, char **argv) {
 
     if(argc != 2) unhandled;
 
-    shput(kwords, TM_WORD, (TokIdx){0});
-    shput(kwords, LTM_WORD, (TokIdx){0});
-    shput(kwords, IF_WORD, (TokIdx){0});
-    shput(kwords, ELSE_WORD, (TokIdx){0});
-    shput(kwords, PRINT_WORD, (TokIdx){0});
+    shput(kwords, TM_WORD, (ShValue){0});
+    shput(kwords, LTM_WORD, (ShValue){0});
+    shput(kwords, IF_WORD, (ShValue){0});
+    shput(kwords, ELSE_WORD, (ShValue){0});
+    shput(kwords, PRINT_WORD, (ShValue){0});
+    shput(kwords, REPEAT_WORD, (ShValue){0});
 
     Ins *ir = gen_ir(argv[1]);
 
@@ -699,6 +784,8 @@ int main(int argc, char **argv) {
             case IT_WRITE: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
             case IT_MOVE: printf("%c\n", dir_to_char(i.as.dir)); break;
             case IT_RETURN: printf("\n"); break;
+            case IT_PUSH_LABEL: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
+            case IT_REPEAT: printf(SLICE_FMT"\n", SLICE_ARG(i.as.tok.slice)); break;
             default: unhandled;
         }
     }
