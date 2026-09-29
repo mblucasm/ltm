@@ -467,13 +467,6 @@ Ins *gen_ir(const char *fp) {
     return ir;
 }
 
-// Rule *tm_match(Tm *tm, Slice state, char c) {
-//     for(size_t i = 0; i < tm->rules.len; ++i) {
-//         Rule *curr = tm->rules.data + i;
-//         if(slice_eq(curr->state.slice, state) && ((curr->read.type == TT_STAR || curr->read.slice.data[1] == c))) return curr;
-//     } return NULL;
-// }
-
 typedef struct {
     Tok tok;
     Slice write;
