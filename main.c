@@ -397,7 +397,6 @@ Ins *gen_ir(const char *fp) {
                         Tok dir   = lex_expect(&l, TT_DIR);
                         Tok next  = lex_expect(&l, TT_IDEN);
                         Ins i = {.type = IT_PUSH_RULE, .as.rule = {.state = t, .read = read, .write = write, .dir = dir, .next = next}};
-                        rule_print(i.as.rule);
                         arrput(ir, i);
                     } break;
                 }
