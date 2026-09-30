@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <errno.h>
 
 // #define DEBUG
 #define unreachable   (_unreachable(__LINE__))
@@ -387,12 +388,9 @@ Tok lex_expect(Lex *l, TokType type) {
     return t;
 }
 
-Ins *gen_ir(const char *fp) {
+Ins *gen_ir(const char * const fp, const char * const contents) {
 
-    Slice s = slice_from_file(fp);
-    if(s.data == NULL) return NULL;
-
-    Lex l = lex_create(fp, s.data);
+    Lex l = lex_create(fp, contents);
 
     Tok t = {0};
     State state = STATE_REGULAR;
@@ -757,9 +755,20 @@ void run_ir(Ins *ir) {
     arrfree(stack_current_ltm_idx);
 }
 
+#ifdef _WIN32
+#   define DELIM '\\'
+#else
+#   define DELIM '/'
+#endif
+
+void usage(const char * const program, int code) {
+    fprintf((code == 0) ? stdout : stderr, "usage: .%c%s <file>.ltm\n", DELIM, program);
+    exit(code);
+}
+
 int main(int argc, char **argv) {
 
-    if(argc != 2) unhandled;
+    if(argc != 2) usage(argv[0] + slice_findr(slice_create_raw(argv[0]), DELIM) + 1, 1);
 
     shput(kwords, TM_WORD, (ShValue){0});
     shput(kwords, LTM_WORD, (ShValue){0});
@@ -768,7 +777,13 @@ int main(int argc, char **argv) {
     shput(kwords, PRINT_WORD, (ShValue){0});
     shput(kwords, REPEAT_WORD, (ShValue){0});
 
-    Ins *ir = gen_ir(argv[1]);
+    Slice s = slice_from_file(argv[1]);
+    if(s.data == NULL) {
+        fprintf(stderr, "Unable to load from %s: %s\n", argv[1], strerror(errno));
+        exit(1);
+    };
+
+    Ins *ir = gen_ir(argv[1], s.data);
 
     printf("======================\n");
     printf("Printing IR\n");

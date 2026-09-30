@@ -35,9 +35,9 @@ Slice slice_slice(Slice *s, char delim) {
 Slice slice_from_file(const char *fp) {
 
     FILE *f = fopen(fp, "rb");
+    if(f == 0) return (Slice){0};
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
-    if(len == -1) return (Slice){0};
 
     rewind(f);
 
@@ -46,6 +46,11 @@ Slice slice_from_file(const char *fp) {
     data[len] = '\0';
 
     return slice_create(data, len);
+}
+
+size_t slice_findr(Slice s, char c) {
+    for(size_t i = 0; i < s.len; ++i) if(s.data[s.len - i - 1] == c) return s.len - i - 1;
+    return s.len;
 }
 
 bool slice_eq(Slice a, Slice b) {

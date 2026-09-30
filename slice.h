@@ -18,6 +18,7 @@ Slice slice_create_raw(const char *data);
 Slice slice_create(const char *data, size_t len);
 Slice slice_slice(Slice *s, char delim);
 Slice slice_from_file(const char *fp);
+size_t slice_findr(Slice s, char c);
 bool slice_eq(Slice a, Slice b);
 char *slice_to_cstr(Slice s);
 void slice_to_buf(Slice s, Buf *buf);
