@@ -182,9 +182,9 @@ int allchars(int c) {
     return !isspace(c) && (c != '\0');
 }
 
-Slice stringParse(const char *start) {
+Slice string_parse(const char *start, char qm) {
     const char *end = start + 1;
-    while(*end != '"' && *end != '\0') ++end;
+    while(*end != qm && *end != '\0') ++end;
     return slice_create(start, end - start);
 }
 
@@ -259,25 +259,32 @@ Tok lex_peek(Lex *l) {
 
     if(isalpha(*start)) {
         Slice raw = tok_parse(start, isalnumcolon);
-        slice_to_buf(raw, &tbuf);
+        slice_to_buf(raw, &tbuf); // TODO: Do it manually when needed or here?
         if(raw.data[raw.len - 1] == ':') return tok_create(TT_LABEL, raw, PEEK_LOCATION);
         return tok_create(is_keyword(tbuf.buf) ? TT_KEYWORD : TT_IDEN, raw, PEEK_LOCATION);
     } else if(*start == '"') {
-        Slice raw = stringParse(start);
-        slice_to_buf(raw, &tbuf);
+        Slice raw = string_parse(start, '"');
+        slice_to_buf(raw, &tbuf); // TODO: Same as.
         Tok t = tok_create(TT_STRING, raw, PEEK_LOCATION);
         if(raw.data[raw.len] != '"') tok_report(t, "Unfinished string\n");
         ++t.slice.len;
         return t;
+    } else if(*start == '\'') {
+        Slice raw = string_parse(start, '\'');
+        slice_to_buf(raw, &tbuf); // TODO: Same as.
+        Tok t = tok_create(TT_CHAR, raw, PEEK_LOCATION);
+        if(raw.data[raw.len] != '\'') tok_report(t, "Unfinished char\n");
+        ++t.slice.len;
+        if(t.slice.len != 3) tok_report(t, "Chars can only be of length 1\n");
+        return t;
     }
 
     Slice raw = tok_parse(start, allchars);
-    slice_to_buf(raw, &tbuf);
+    slice_to_buf(raw, &tbuf); // TODO: Same as.
 
     if(slice_eq(raw, slice_create_raw("{"))) return tok_create(TT_OPENING, raw, PEEK_LOCATION);
     else if(slice_eq(raw, slice_create_raw("}"))) return tok_create(TT_CLOSING, raw, PEEK_LOCATION);
     else if(slice_eq(raw, slice_create_raw("*"))) return tok_create(TT_STAR, raw, PEEK_LOCATION);
-    else if(raw.len == 3 && raw.data[0] == '\'' && raw.data[2] == '\'') return tok_create(TT_CHAR, raw, PEEK_LOCATION);
     else if(raw.len == 1 && (*raw.data == '<' || *raw.data == '-' || *raw.data == '>')) return tok_create(TT_DIR, raw, PEEK_LOCATION);
     else if(raw.len == 2 && raw.data[0] == '=' && raw.data[1] == '>') return tok_create(TT_ARROW, raw, PEEK_LOCATION);
 
