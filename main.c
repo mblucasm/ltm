@@ -646,7 +646,7 @@ void run_ir(Ins *ir) {
                 if(i == -1) tok_report(ins.as.tok, "Undefined reference to label\n");
                 assert(arrlenu(stack_current_ltm_idx) > 0);
                 size_t ltm_decl_idx = arrlast(stack_current_ltm_idx);
-                if(labels[i].value.ti.idx < ltm_decl_idx) tok_report(ins.as.tok, "Can't jump between two different ltms\n");
+                if(labels[i].value.ti.idx < ltm_decl_idx || labels[i].value.ti.idx > k) tok_report(ins.as.tok, "Can't jump between two different ltms\n");
                 k = labels[i].value.ti.idx; // Loop adds 1 and skips the push label instruction.
             } break;
 
