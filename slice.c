@@ -44,6 +44,7 @@ Slice slice_from_file(const char *fp) {
     char *data = malloc(sizeof(char) * (len + 1));
     fread(data, sizeof(char), len, f);
     data[len] = '\0';
+    fclose(f);
 
     return slice_create(data, len);
 }
